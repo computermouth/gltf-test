@@ -12,7 +12,7 @@
 
 // magic number, largest power of 2 that didn't
 // give me a linker error :D
-#define MAP_MAX 1024
+#define MAP_MAX 256
 uint8_t map[MAP_MAX][MAP_MAX][MAP_MAX] = {0};
 uint32_t map_max_x = 0;
 uint32_t map_max_y = 0;
@@ -28,7 +28,7 @@ void get_material_vector(cgltf_material * materials, cgltf_size size) {
         vector_push(mat_vec, &mat);
     }
 
-    printf("len(mat_vec): %lu\n", vector_size(mat_vec));
+    fprintf(stderr, "len(mat_vec): %lu\n", vector_size(mat_vec));
 }
 
 uint8_t get_material_index(cgltf_material * material) {
@@ -45,44 +45,44 @@ uint8_t get_material_index(cgltf_material * material) {
 
 bool getMaterialImageBytes(cgltf_primitive* primitive, unsigned char** imageBytes, size_t* imageSize) {
     if (primitive == NULL) {
-        printf("Primitive pointer is NULL.\n");
+        fprintf(stderr, "Primitive pointer is NULL.\n");
         return false;
     }
 
     cgltf_material* material = primitive->material;
 
     if (material == NULL) {
-        printf("Primitive does not have a material.\n");
+        fprintf(stderr, "Primitive does not have a material.\n");
         return false;
     }
 
     cgltf_pbr_metallic_roughness* pbr = &material->pbr_metallic_roughness;
 
     if (pbr->base_color_texture.texture == NULL) {
-        printf("Material does not have an associated texture.\n");
+        fprintf(stderr, "Material does not have an associated texture.\n");
         return false;
     }
 
     cgltf_texture* textureView = pbr->base_color_texture.texture;
 
     if (textureView->image == NULL) {
-        printf("Texture does not have an associated image.\n");
+        fprintf(stderr, "Texture does not have an associated image.\n");
         return false;
     }
 
     cgltf_image* image = textureView->image;
 
     if (image->uri != NULL && strlen(image->uri) > 0) {
-        printf("URI-based images are not supported in this example.\n");
+        fprintf(stderr, "URI-based images are not supported in this example.\n");
         return false;
     }
 
     if (image->buffer_view == NULL) {
-        printf("Image does not have a buffer view.\n");
+        fprintf(stderr, "Image does not have a buffer view.\n");
         return false;
     }
 
-    printf("found image: %s.png\n", image->name);
+    fprintf(stderr, "found image: %s.png\n", image->name);
 
     *imageBytes = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset);
     *imageSize = image->buffer_view->size;
@@ -98,7 +98,7 @@ bool getMaterialImageBytes(cgltf_primitive* primitive, unsigned char** imageByte
 
 void mapMeshesToBooleanArray(cgltf_data * data) {
 
-    printf("nodes: %d\n", (int)data->nodes_count);
+    fprintf(stderr, "nodes: %d\n", (int)data->nodes_count);
 
     for (size_t i = 0; i < data->nodes_count; ++i) {
 
@@ -108,14 +108,14 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
         cgltf_node_transform_world(n, m);
 
         cgltf_mesh* mesh = n->mesh;
-        printf("mesh: %s\n", mesh->name);
+        fprintf(stderr, "mesh: %s\n", mesh->name);
 
         // Calculate the dimensions of the primitive
         int minPos[3] = {INT_MAX, INT_MAX, INT_MAX};
         int maxPos[3] = {INT_MIN, INT_MIN, INT_MIN};
 
         if (mesh->primitives_count > 1)
-            printf("W: primitive_count > 1\n");
+            fprintf(stderr, "W: primitive_count > 1\n");
 
         uint8_t texture_id = 0;
 
@@ -127,12 +127,12 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
             if (primitive->material) {
                 texture_id = get_material_index(primitive->material);
             } else {
-                printf("E: primitive has no texture\n");
+                fprintf(stderr, "W: primitive has no texture\n");
                 continue;
             }
 
             if (texture_id == 0) {
-                printf("W: texture_id is 0\n");
+                fprintf(stderr, "W: texture_id is 0\n");
                 continue;
             }
 
@@ -171,20 +171,25 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
                 maxPos[2] = (int)fmax(maxPos[2], posZ);
             }
         }
+        
+        if( minPos[0] < 0 || minPos[0] >= MAP_MAX
+            || minPos[1] < 0 || minPos[1] >= MAP_MAX
+            || minPos[2] < 0 || minPos[2] >= MAP_MAX
+            || maxPos[0] < 0 || maxPos[0] >= MAP_MAX
+            || maxPos[1] < 0 || maxPos[1] >= MAP_MAX
+            || maxPos[2] < 0 || maxPos[2] >= MAP_MAX
+        ){
+            fprintf(stderr, "W: block is outside range of 0 <-> MAP_MAX (%u) -- skipping\n", MAP_MAX);
+        }
 
         // Set the corresponding indices in the boolean map array
         for (int x = minPos[0]; x < maxPos[0]; ++x) {
             for (int y = minPos[1]; y < maxPos[1]; ++y) {
                 for (int z = minPos[2]; z < maxPos[2]; ++z) {
 
-                    if (x >= MAP_MAX || y >= MAP_MAX || z >= MAP_MAX) {
-                        printf("E: block is beyond MAP_MAX (%u)\n", MAP_MAX);
-                        exit(1);
-                    }
-
                     if (x > map_max_x) map_max_x = x;
                     if (y > map_max_y) map_max_y = y;
-                    if (z > map_max_z) map_max_x = z;
+                    if (z > map_max_z) map_max_z = z;
 
                     map[x][y][z] = texture_id;
                 }
@@ -199,7 +204,7 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
 int main(int argc, char * argv[]) {
 
     if (argc != 2) {
-        printf("usage: %s <file.gltf>\n", argv[0]);
+        fprintf(stderr, "usage: %s <file.gltf>\n", argv[0]);
         exit(1);
     }
 
@@ -211,7 +216,7 @@ int main(int argc, char * argv[]) {
     cgltf_result result = cgltf_parse_file(&options, file_path, &data);
 
     if (result != cgltf_result_success) {
-        printf("Failed to parse glTF file: %s\n", file_path);
+        fprintf(stderr, "Failed to parse glTF file: %s\n", file_path);
         return 1;
     }
 
@@ -219,7 +224,7 @@ int main(int argc, char * argv[]) {
     result = cgltf_load_buffers(&options, data, file_path);
 
     if (result != cgltf_result_success) {
-        printf("Failed to load buffers\n");
+        fprintf(stderr, "Failed to load buffers\n");
         return 1;
     }
 
@@ -227,17 +232,23 @@ int main(int argc, char * argv[]) {
 
     // Call the function to map the meshes to the boolean array
     mapMeshesToBooleanArray(data);
-
-    // Set the corresponding indices in the boolean map array
-    for (int z = 0; z < 3; z++) {
-        printf("{\n");
-        printf("  {%d,%d,%d}\n", map[0][0][z], map[0][1][z], map[0][2][z]);
-        printf("  {%d,%d,%d}\n", map[1][0][z], map[1][1][z], map[1][2][z]);
-        printf("  {%d,%d,%d}\n", map[2][0][z], map[0][1][z], map[2][2][z]);
-        printf("}\n");
+    
+    fprintf(stdout, "uint8_t %s[%d][%d][%d] = {\n", argv[1], map_max_x + 1, map_max_y + 1, map_max_z + 1);
+    for(int x = 0; x < map_max_x + 1; x++){
+    fprintf(stdout, "   {\n");
+        for(int y = 0; y < map_max_y + 1; y++){
+    fprintf(stdout, "       {");
+            for(int z = 0; z < map_max_z + 1; z++){
+    fprintf(stdout, "%u,", map[x][y][z]);
+            }
+    fprintf(stdout, "},\n");
+        }
+    fprintf(stdout, "   },\n");
     }
-
-    // vector_free(mat_vec);
+    fprintf(stdout, "};\n");
+    
+    
+    vector_free(mat_vec);
 
     return 0;
 }
