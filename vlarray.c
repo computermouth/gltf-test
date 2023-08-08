@@ -19,7 +19,7 @@ int main(int argc, char * argv[])
     
     uint8_t (*arr)[max_x][max_z][max_y] = malloc(sizeof *arr);
     if(arr == NULL){
-        printf("E: failed to alloc %lu\n", sizeof *arr);
+        printf("E: failed to alloc %luB\n", sizeof *arr);
         exit(1);
     }
     

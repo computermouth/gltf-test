@@ -18,6 +18,12 @@ uint32_t map_max_x = 0;
 uint32_t map_max_y = 0;
 uint32_t map_max_z = 0;
 
+typedef struct {
+    uint64_t x;
+    uint64_t y;
+    uint64_t z;
+} pos3_t;
+
 vector * mat_vec = NULL;
 
 void get_material_vector(cgltf_material * materials, cgltf_size size) {
@@ -201,6 +207,113 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
     cgltf_free(data);
 }
 
+pos3_t get_max_dimensions(cgltf_data * data) {
+    
+    pos3_t max_xyz = { 0, 0, 0 };
+
+    for (size_t i = 0; i < data->nodes_count; ++i) {
+
+        cgltf_node * n = &(data->nodes[i]);
+
+        cgltf_float m[16] = {0};
+        cgltf_node_transform_world(n, m);
+
+        cgltf_mesh* mesh = n->mesh;
+
+        // Calculate the dimensions of the primitive
+        pos3_t mesh_min_xyz = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
+        pos3_t mesh_max_xyz = {0, 0, 0};
+
+        if (mesh->primitives_count > 1)
+            fprintf(stderr, "W: primitive_count > 1\n");
+
+        // Iterate over the primitives of the mesh
+        for (size_t j = 0; j < mesh->primitives_count; ++j) {
+
+            cgltf_primitive* primitive = &mesh->primitives[j];
+
+            // Access the positions of the primitive
+            cgltf_accessor* positionAccessor = primitive->attributes[0].data;
+            cgltf_buffer_view* positionView = positionAccessor->buffer_view;
+            cgltf_buffer* positionBuffer = positionView->buffer;
+            float* positions = (float*)(positionBuffer->data + positionView->offset + positionAccessor->offset);
+
+            size_t positionCount = positionAccessor->count;
+            size_t positionStride = positionAccessor->stride / sizeof(float);
+
+            // Apply the transformation matrix to each vertex position
+            for (size_t k = 0; k < positionCount; ++k) {
+                float x = positions[k * positionStride];
+                float y = positions[k * positionStride + 1];
+                float z = positions[k * positionStride + 2];
+
+                // Apply the transformation matrix to the vertex position
+                float transformedX = x * m[0] + y * m[4] + z * m[8] + m[12];
+                float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
+                float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
+                
+                if(transformedX < 0 || transformedY < 0 || transformedZ < 0)
+                    goto skip_negative;
+                
+                // todo, if any of the transformed are negative, skip
+
+                // Calculate the integer indices of the transformed vertex position
+                uint64_t posX = (uint64_t)transformedX;
+                uint64_t posY = (uint64_t)transformedY;
+                uint64_t posZ = (uint64_t)transformedZ;
+
+                // Update the minimum and maximum positions
+                mesh_min_xyz.x = (uint64_t)fmin(mesh_min_xyz.x, posX);
+                mesh_min_xyz.y = (uint64_t)fmin(mesh_min_xyz.y, posY);
+                mesh_min_xyz.z = (uint64_t)fmin(mesh_min_xyz.z, posZ);
+
+                mesh_max_xyz.x = (uint64_t)fmax(mesh_max_xyz.x, posX);
+                mesh_max_xyz.y = (uint64_t)fmax(mesh_max_xyz.y, posY);
+                mesh_max_xyz.z = (uint64_t)fmax(mesh_max_xyz.z, posZ);
+            }
+        }
+
+        // find the largest index in the mesh, and check against max
+        for (uint64_t x = mesh_min_xyz.x; x < mesh_max_xyz.x; ++x) {
+            for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y) {
+                for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z) {
+                    if (x > max_xyz.x) max_xyz.x = x;
+                    if (y > max_xyz.y) max_xyz.y = y;
+                    if (z > max_xyz.z) max_xyz.z = z;
+                }
+            }
+        }
+        
+        // one or more indicies was in negative space
+        skip_negative:
+            continue;
+    }
+
+    // this is used later for alloc size
+    // so increase all dimensions by 1
+    max_xyz.x += 1;
+    max_xyz.y += 1;
+    max_xyz.z += 1;
+    
+    // check if the dimensions are too large
+    // todo, test
+    uint64_t rollover_xy = max_xyz.x * max_xyz.y;
+    if (max_xyz.x != 0 && rollover_xy / max_xyz.x != max_xyz.y){
+        // overflowed
+        fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
+        exit(1);
+    }
+    
+    uint64_t rollover_z = rollover_xy * max_xyz.z;
+    if (max_xyz.y != 0 && rollover_z / rollover_xy != max_xyz.z){
+        // overflowed
+        fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
+        exit(1);
+    }
+    
+    return max_xyz;
+}
+
 int main(int argc, char * argv[]) {
 
     if (argc != 2) {
@@ -227,6 +340,9 @@ int main(int argc, char * argv[]) {
         fprintf(stderr, "Failed to load buffers\n");
         return 1;
     }
+    
+    pos3_t max_p = get_max_dimensions(data);
+    fprintf(stderr, "max: { .x = %lu, .y = %lu, .z = %lu }\n", max_p.x, max_p.y, max_p.z);
 
     get_material_vector(data->materials, data->materials_count);
 
