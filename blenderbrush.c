@@ -10,14 +10,6 @@
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
 
-// magic number, largest power of 2 that didn't
-// give me a linker error :D
-#define MAP_MAX 256
-uint8_t map[MAP_MAX][MAP_MAX][MAP_MAX] = {0};
-uint32_t map_max_x = 0;
-uint32_t map_max_y = 0;
-uint32_t map_max_z = 0;
-
 typedef struct {
     uint64_t x;
     uint64_t y;
@@ -29,6 +21,7 @@ vector * mat_vec = NULL;
 void get_material_vector(cgltf_material * materials, cgltf_size size) {
     mat_vec = vector_init(sizeof(cgltf_material *));
 
+    // todo, skip entities
     for(cgltf_size i = 0; i < size; i++) {
         cgltf_material * mat = &(materials[i]);
         vector_push(mat_vec, &mat);
@@ -49,7 +42,7 @@ uint8_t get_material_index(cgltf_material * material) {
     return 0;
 }
 
-bool getMaterialImageBytes(cgltf_primitive* primitive, unsigned char** imageBytes, size_t* imageSize) {
+bool get_material_image_bytes(cgltf_primitive* primitive, unsigned char** imageBytes, size_t* imageSize) {
     if (primitive == NULL) {
         fprintf(stderr, "Primitive pointer is NULL.\n");
         return false;
@@ -69,14 +62,14 @@ bool getMaterialImageBytes(cgltf_primitive* primitive, unsigned char** imageByte
         return false;
     }
 
-    cgltf_texture* textureView = pbr->base_color_texture.texture;
+    cgltf_texture* texture_view = pbr->base_color_texture.texture;
 
-    if (textureView->image == NULL) {
+    if (texture_view->image == NULL) {
         fprintf(stderr, "Texture does not have an associated image.\n");
         return false;
     }
 
-    cgltf_image* image = textureView->image;
+    cgltf_image* image = texture_view->image;
 
     if (image->uri != NULL && strlen(image->uri) > 0) {
         fprintf(stderr, "URI-based images are not supported in this example.\n");
@@ -102,7 +95,7 @@ bool getMaterialImageBytes(cgltf_primitive* primitive, unsigned char** imageByte
     return true;
 }
 
-void mapMeshesToBooleanArray(cgltf_data * data) {
+void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][max.y][max.z]) {
 
     fprintf(stderr, "nodes: %d\n", (int)data->nodes_count);
 
@@ -114,11 +107,10 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
         cgltf_node_transform_world(n, m);
 
         cgltf_mesh* mesh = n->mesh;
-        fprintf(stderr, "mesh: %s\n", mesh->name);
 
         // Calculate the dimensions of the primitive
-        int minPos[3] = {INT_MAX, INT_MAX, INT_MAX};
-        int maxPos[3] = {INT_MIN, INT_MIN, INT_MIN};
+        pos3_t mesh_min_xyz = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
+        pos3_t mesh_max_xyz = {0, 0, 0};
 
         if (mesh->primitives_count > 1)
             fprintf(stderr, "W: primitive_count > 1\n");
@@ -143,13 +135,13 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
             }
 
             // Access the positions of the primitive
-            cgltf_accessor* positionAccessor = primitive->attributes[0].data;
-            cgltf_buffer_view* positionView = positionAccessor->buffer_view;
-            cgltf_buffer* positionBuffer = positionView->buffer;
-            float* positions = (float*)(positionBuffer->data + positionView->offset + positionAccessor->offset);
+            cgltf_accessor* position_accessor = primitive->attributes[0].data;
+            cgltf_buffer_view* position_view = position_accessor->buffer_view;
+            cgltf_buffer* position_buffer = position_view->buffer;
+            float* positions = (float*)(position_buffer->data + position_view->offset + position_accessor->offset);
 
-            size_t positionCount = positionAccessor->count;
-            size_t positionStride = positionAccessor->stride / sizeof(float);
+            size_t positionCount = position_accessor->count;
+            size_t positionStride = position_accessor->stride / sizeof(float);
 
             // Apply the transformation matrix to each vertex position
             for (size_t k = 0; k < positionCount; ++k) {
@@ -161,46 +153,59 @@ void mapMeshesToBooleanArray(cgltf_data * data) {
                 float transformedX = x * m[0] + y * m[4] + z * m[8] + m[12];
                 float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
                 float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
+                
+                // skip if negative
+                if(transformedX < 0 || transformedY < 0 || transformedZ < 0)
+                    goto skip_negative;
 
                 // Calculate the integer indices of the transformed vertex position
-                int posX = (int)transformedX;
-                int posY = (int)transformedY;
-                int posZ = (int)transformedZ;
+                uint64_t posX = (uint64_t)transformedX;
+                uint64_t posY = (uint64_t)transformedY;
+                uint64_t posZ = (uint64_t)transformedZ;
 
                 // Update the minimum and maximum positions
-                minPos[0] = (int)fmin(minPos[0], posX);
-                minPos[1] = (int)fmin(minPos[1], posY);
-                minPos[2] = (int)fmin(minPos[2], posZ);
+                mesh_min_xyz.x = (uint64_t)fmin(mesh_min_xyz.x, posX);
+                mesh_min_xyz.y = (uint64_t)fmin(mesh_min_xyz.y, posY);
+                mesh_min_xyz.z = (uint64_t)fmin(mesh_min_xyz.z, posZ);
 
-                maxPos[0] = (int)fmax(maxPos[0], posX);
-                maxPos[1] = (int)fmax(maxPos[1], posY);
-                maxPos[2] = (int)fmax(maxPos[2], posZ);
+                mesh_max_xyz.x = (uint64_t)fmax(mesh_max_xyz.x, posX);
+                mesh_max_xyz.y = (uint64_t)fmax(mesh_max_xyz.y, posY);
+                mesh_max_xyz.z = (uint64_t)fmax(mesh_max_xyz.z, posZ);
             }
         }
         
-        if( minPos[0] < 0 || minPos[0] >= MAP_MAX
-            || minPos[1] < 0 || minPos[1] >= MAP_MAX
-            || minPos[2] < 0 || minPos[2] >= MAP_MAX
-            || maxPos[0] < 0 || maxPos[0] >= MAP_MAX
-            || maxPos[1] < 0 || maxPos[1] >= MAP_MAX
-            || maxPos[2] < 0 || maxPos[2] >= MAP_MAX
+        if( //mins
+               mesh_min_xyz.x < 0 || mesh_min_xyz.x > max.x
+            || mesh_min_xyz.y < 0 || mesh_min_xyz.y > max.y
+            || mesh_min_xyz.z < 0 || mesh_min_xyz.z > max.z
+            // maxes
+            || mesh_max_xyz.x < 0 || mesh_max_xyz.x > max.x
+            || mesh_max_xyz.y < 0 || mesh_max_xyz.y > max.y
+            || mesh_max_xyz.z < 0 || mesh_max_xyz.z > max.z
         ){
-            fprintf(stderr, "W: block is outside range of 0 <-> MAP_MAX (%u) -- skipping\n", MAP_MAX);
+            fprintf(stderr,
+                "W: block { %lu, %lu, %lu } - { %lu, %lu, %lu } is outside range of { 0, 0, 0 } <-> { %lu, %lu, %lu } -- skipping\n -- (this should never be seen in practice)",
+                mesh_min_xyz.x, mesh_min_xyz.y, mesh_min_xyz.z,
+                mesh_max_xyz.x, mesh_max_xyz.y, mesh_max_xyz.z,
+                max.x, max.y, max.z
+            );
         }
 
         // Set the corresponding indices in the boolean map array
-        for (int x = minPos[0]; x < maxPos[0]; ++x) {
-            for (int y = minPos[1]; y < maxPos[1]; ++y) {
-                for (int z = minPos[2]; z < maxPos[2]; ++z) {
+        for (uint64_t x = mesh_min_xyz.x; x < mesh_max_xyz.x; ++x)
+            for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y)
+                for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z)
+                    (*arr)[x][y][z] = texture_id;
 
-                    if (x > map_max_x) map_max_x = x;
-                    if (y > map_max_y) map_max_y = y;
-                    if (z > map_max_z) map_max_z = z;
-
-                    map[x][y][z] = texture_id;
-                }
-            }
-        }
+        fprintf(stderr, "mesh: %s\n", mesh->name);
+        fprintf(stderr, "  - { %lu, %lu, %lu } - { %lu, %lu, %lu }\n",
+             mesh_min_xyz.x, mesh_min_xyz.y, mesh_min_xyz.z,
+             mesh_max_xyz.x, mesh_max_xyz.y, mesh_max_xyz.z
+        );
+        
+        // one or more indicies was in negative space
+        skip_negative:
+            continue;
     }
 
     // Clean up cgltf resources
@@ -211,6 +216,7 @@ pos3_t get_max_dimensions(cgltf_data * data) {
     
     pos3_t max_xyz = { 0, 0, 0 };
 
+    // todo, skip entities
     for (size_t i = 0; i < data->nodes_count; ++i) {
 
         cgltf_node * n = &(data->nodes[i]);
@@ -254,8 +260,6 @@ pos3_t get_max_dimensions(cgltf_data * data) {
                 
                 if(transformedX < 0 || transformedY < 0 || transformedZ < 0)
                     goto skip_negative;
-                
-                // todo, if any of the transformed are negative, skip
 
                 // Calculate the integer indices of the transformed vertex position
                 uint64_t posX = (uint64_t)transformedX;
@@ -342,28 +346,45 @@ int main(int argc, char * argv[]) {
     }
     
     pos3_t max_p = get_max_dimensions(data);
+    uint8_t (*arr)[max_p.x][max_p.y][max_p.z] = calloc(1, sizeof *arr);
     fprintf(stderr, "max: { .x = %lu, .y = %lu, .z = %lu }\n", max_p.x, max_p.y, max_p.z);
-
+    if(arr == NULL){
+        printf("E: failed to alloc %luB\n", sizeof *arr);
+        exit(1);
+    }
+    
     get_material_vector(data->materials, data->materials_count);
 
     // Call the function to map the meshes to the boolean array
-    mapMeshesToBooleanArray(data);
+    map_meshes_to_array(data, max_p, arr);
     
-    fprintf(stdout, "uint8_t %s[%d][%d][%d] = {\n", argv[1], map_max_x + 1, map_max_y + 1, map_max_z + 1);
-    for(int x = 0; x < map_max_x + 1; x++){
-    fprintf(stdout, "   {\n");
-        for(int y = 0; y < map_max_y + 1; y++){
-    fprintf(stdout, "       {");
-            for(int z = 0; z < map_max_z + 1; z++){
-    fprintf(stdout, "%u,", map[x][y][z]);
+    // todo, msgpack
+    
+    // C source print
+    fprintf(stdout, "uint8_t %s[%lu][%lu][%lu] = {\n", argv[1], max_p.x, max_p.y, max_p.z);
+    for(int x = 0; x < max_p.x; x++){
+        fprintf(stdout, "\t{\n");
+        for(int y = 0; y < max_p.y; y++){
+            fprintf(stdout, "\t\t{");
+            for(int z = 0; z < max_p.z; z++){
+                fprintf(stdout, "%u", (*arr)[x][y][z]);
+                if (z != max_p.z - 1)
+                    fprintf(stdout, ",");
             }
-    fprintf(stdout, "},\n");
+            fprintf(stdout, "},\n");
         }
-    fprintf(stdout, "   },\n");
+        fprintf(stdout, "\t},\n");
     }
     fprintf(stdout, "};\n");
     
+    // // byte map print
+    // fprintf(stdout, "%lu,%lu,%lu\n", max_p.x, max_p.y, max_p.z);
+    // for(int x = 0; x < max_p.x; x++)
+    //     for(int y = 0; y < max_p.y; y++)
+    //         for(int z = 0; z < max_p.z; z++)
+    //             fprintf(stdout, "%c", (*arr)[x][y][z]);
     
+    free(arr);
     vector_free(mat_vec);
 
     return 0;
