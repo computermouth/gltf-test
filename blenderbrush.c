@@ -4,9 +4,10 @@
 #include <string.h>
 #include <limits.h>
 #include <math.h>
+#include <libgen.h>
 
 #include "vector.h"
-
+#include "microtar.h"
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
 
@@ -42,13 +43,7 @@ uint8_t get_material_index(cgltf_material * material) {
     return 0;
 }
 
-bool get_material_image_bytes(cgltf_primitive* primitive, unsigned char** imageBytes, size_t* imageSize) {
-    if (primitive == NULL) {
-        fprintf(stderr, "Primitive pointer is NULL.\n");
-        return false;
-    }
-
-    cgltf_material* material = primitive->material;
+bool get_material_image_bytes(cgltf_material* material, char ** imageName, unsigned char** imageBytes, size_t* imageSize) {
 
     if (material == NULL) {
         fprintf(stderr, "Primitive does not have a material.\n");
@@ -83,14 +78,9 @@ bool get_material_image_bytes(cgltf_primitive* primitive, unsigned char** imageB
 
     fprintf(stderr, "found image: %s.png\n", image->name);
 
+    *imageName = image->name;
     *imageBytes = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset);
     *imageSize = image->buffer_view->size;
-
-    char namebuf[500] = {0};
-    sprintf(namebuf, "%s.png", image->name);
-
-    FILE * imgout = fopen(namebuf, "w");
-    fwrite(*imageBytes, sizeof(unsigned char), *imageSize, imgout);
 
     return true;
 }
@@ -209,7 +199,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
     }
 
     // Clean up cgltf resources
-    cgltf_free(data);
+    // cgltf_free(data);
 }
 
 pos3_t get_max_dimensions(cgltf_data * data) {
@@ -320,12 +310,13 @@ pos3_t get_max_dimensions(cgltf_data * data) {
 
 int main(int argc, char * argv[]) {
 
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <file.gltf>\n", argv[0]);
+    if (argc != 3) {
+        fprintf(stderr, "usage: %s <file.gltf> <some.tar>\n", argv[0]);
         exit(1);
     }
 
     char * file_path = argv[1];
+    char * tar_path = argv[2];
 
     // Load the glTF file using cgltf
     cgltf_data* data;
@@ -361,31 +352,95 @@ int main(int argc, char * argv[]) {
     // todo, msgpack
     
     // C source print
-    fprintf(stdout, "uint8_t %s[%lu][%lu][%lu] = {\n", argv[1], max_p.x, max_p.y, max_p.z);
-    for(int x = 0; x < max_p.x; x++){
-        fprintf(stdout, "\t{\n");
-        for(int y = 0; y < max_p.y; y++){
-            fprintf(stdout, "\t\t{");
-            for(int z = 0; z < max_p.z; z++){
-                fprintf(stdout, "%u", (*arr)[x][y][z]);
-                if (z != max_p.z - 1)
-                    fprintf(stdout, ",");
-            }
-            fprintf(stdout, "},\n");
-        }
-        fprintf(stdout, "\t},\n");
+    // fprintf(stdout, "uint8_t %s[%lu][%lu][%lu] = {\n", argv[1], max_p.x, max_p.y, max_p.z);
+    // for(int x = 0; x < max_p.x; x++){
+    //     fprintf(stdout, "\t{\n");
+    //     for(int y = 0; y < max_p.y; y++){
+    //         fprintf(stdout, "\t\t{");
+    //         for(int z = 0; z < max_p.z; z++){
+    //             fprintf(stdout, "%u", (*arr)[x][y][z]);
+    //             if (z != max_p.z - 1)
+    //                 fprintf(stdout, ",");
+    //         }
+    //         fprintf(stdout, "},\n");
+    //     }
+    //     fprintf(stdout, "\t},\n");
+    // }
+    // fprintf(stdout, "};\n");
+    
+    char * file_base = basename(argv[1]);
+    char * gltf_subs = strstr(file_base, ".gl");
+    if (gltf_subs == NULL){
+        fprintf(stderr, "couldn't find a .{gltf,glb} suffix");
+        return 1;
     }
-    fprintf(stdout, "};\n");
+    gltf_subs[0] = '\0';
+    
+    uint8_t (*map_bytes)[max_p.x * max_p.y * max_p.z] = (uint8_t (*)[])(*arr);
+    
+    {
+        mtar_t tar;
+        // maps/ + strlen(name) + .map + \0
+        char * map_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
+        char * man_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
+        char * man_data = calloc(100, sizeof(char));
+        
+        sprintf(map_name, "maps/%s.map", file_base);
+        // todo, one manifest file for all maps
+        sprintf(man_name, "maps/%s.man", file_base);
+        sprintf(man_data, "%lu,%lu,%lu", max_p.x, max_p.y, max_p.z);
+        
+        /* Open archive for writing */
+        mtar_open(&tar, tar_path, "w");
+        
+        /* Write map file */
+        mtar_write_file_header(&tar, map_name, sizeof *map_bytes);
+        mtar_write_data(&tar, *map_bytes, sizeof *map_bytes);
+        /* Write man file */
+        mtar_write_file_header(&tar, man_name, strlen(man_data));
+        mtar_write_data(&tar, man_data, strlen(man_data));
+        
+        char * mat_name = calloc(100, sizeof(char));
+        size_t mat_count = vector_size(mat_vec);
+        for(size_t i = 0; i < mat_count; i++){
+            cgltf_material ** mat_p = vector_at(mat_vec, i);
+            cgltf_material * mat_m = *mat_p;
+            memset(mat_name, 0, 100);
+            
+            char * img_name = NULL;
+            unsigned char * img_bytes = NULL;
+            size_t img_size = 0;
+            get_material_image_bytes(mat_m, &img_name, &img_bytes, &img_size);
+            snprintf(mat_name, 99, "txtr/%s.png", img_name);
+            
+            /* Write image file */
+            mtar_write_file_header(&tar, mat_name, img_size);
+            mtar_write_data(&tar, img_bytes, img_size);
+        }
+        
+        /* Finalize -- this needs to be the last thing done before closing */
+        mtar_finalize(&tar);
+        
+        /* Close archive */
+        mtar_close(&tar);
+        
+        free(map_name);
+        free(man_name);
+        free(man_data);
+        free(mat_name);
+    }
+    
     
     // // byte map print
     // fprintf(stdout, "%lu,%lu,%lu\n", max_p.x, max_p.y, max_p.z);
-    // for(int x = 0; x < max_p.x; x++)
-    //     for(int y = 0; y < max_p.y; y++)
-    //         for(int z = 0; z < max_p.z; z++)
-    //             fprintf(stdout, "%c", (*arr)[x][y][z]);
+    for(int x = 0; x < max_p.x; x++)
+        for(int y = 0; y < max_p.y; y++)
+            for(int z = 0; z < max_p.z; z++)
+                fprintf(stdout, "%c", (*arr)[x][y][z]);
     
     free(arr);
     vector_free(mat_vec);
+    cgltf_free(data);
 
     return 0;
 }

@@ -1,3 +1,6 @@
 *.png
 a.out
 *.blend*
+*.tar
+maps
+txtr
