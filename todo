@@ -1,0 +1,5 @@
+change map array to brushes, construct array on load
+use one huge manifest file (ini?) for all map correlations to textures and models
+refactor/rewrite in general
+add flags for gltf packing versus audio/ttf/etc packing
+  - maybe arbitrary --pack myfile.ogg --dir /snd or something
