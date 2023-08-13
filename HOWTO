@@ -1,6 +1,6 @@
 blender:
 	cube to .5**3, apply scale
 	select vertex, mesh > snap > cursor to selected, object mode, object > origin > origin to cursor
-	textures are geometry -> vector(scale) -> image -> material output
+	textures are geometry -> vector(scale) -> image -> material output (howto.png)
 	when copying a mesh, use duplicate, not copy/paste
 	blender -> file -> external data -> automatically pack
