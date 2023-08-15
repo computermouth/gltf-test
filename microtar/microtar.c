@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stddef.h>
 #include <string.h>
+#include <time.h>
 
 #include "microtar.h"
 
@@ -421,6 +422,7 @@ int mtar_write_file_header(mtar_t *tar, const char *name, size_t size) {
   h.size = size;
   h.type = MTAR_TREG;
   h.mode = 0664;
+  h.mtime = time(NULL);
   /* Write header */
   return mtar_write_header(tar, &h);
 }

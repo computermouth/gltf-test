@@ -1,7 +1,7 @@
 
 #include <string.h>
 
-#include "src/microtar.h"
+#include "microtar/microtar.h"
 
 int main(){
     
@@ -11,13 +11,13 @@ int main(){
     int rc = 0;
     
     /* Open archive for reading */
-    if ( (rc = mtar_open(&tar, "98-102.tar", "r")) )
+    if ( (rc = mtar_open(&tar, "some.tar", "r")) )
         goto quit;
     
     /* Print all file names and sizes */
     rc = mtar_read_header(&tar, &h);
     while ( rc == MTAR_ESUCCESS ){
-        printf("head: %s -- type: %c -- bytes: %d\n", h.name, h.type, h.size);
+        printf("head: %s -- type: %c -- bytes: %d\n", h.name, h.type, h.mtime);
         rc = mtar_next(&tar);
         if (rc)
             break;
