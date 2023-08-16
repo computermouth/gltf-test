@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <math.h>
@@ -380,25 +381,78 @@ int main(int argc, char * argv[]) {
     
     {
         mtar_t tar;
+        
+        /* Open archive for reading in old ini */
+        int open_err = mtar_open(&tar, tar_path, "r");
+        if (open_err && open_err != MTAR_EOPENFAIL){
+            fprintf(stderr, "E: failed to open %s -- %s\n", tar_path, mtar_strerror(open_err));
+            exit(1);
+        }
+        
         // maps/ + strlen(name) + .map + \0
         char * map_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
-        char * man_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
-        char * man_data = calloc(100, sizeof(char));
+        char * ini_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
+        char * ini_data = calloc(500, sizeof(char));
+        char * ini_data_end = ini_data;
         
         sprintf(map_name, "maps/%s.map", file_base);
         // todo, one manifest file for all maps
-        sprintf(man_name, "maps/%s.man", file_base);
-        sprintf(man_data, "%lu,%lu,%lu", max_p.x, max_p.y, max_p.z);
+        sprintf(ini_name, "maps/%s.ini", file_base);
         
-        /* Open archive for writing */
+        if (!open_err) {
+            mtar_header_t ini_header;
+            int err = mtar_find(&tar, ini_name, &ini_header);
+            if (err && err != MTAR_ENOTFOUND){
+                fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
+                exit(1);
+            }
+            // found it
+            if (!err) {
+                ini_data = realloc(ini_data, ini_header.size + 500 + 1);
+                // overkill, could just set new data
+                // but easier math c:
+                memset(ini_data, 0, ini_header.size + 500 + 1);
+                err = mtar_read_data(&tar, ini_data, ini_header.size);
+                if (err){
+                    fprintf(stderr, "E: failed to search for %s\n", ini_name);
+                    exit(1);
+                }
+                // fprintf(stderr, "ini_data: %s\n", ini_data);
+                ini_data_end = &(ini_data[ini_header.size]);
+                // fprintf(stderr, "ini_data_end: %s\n", ini_data_end);
+            }
+            
+            mtar_close(&tar);
+        }
+        tar = (mtar_t){ 0 };
+        /* Open archive for writing(append) */
         mtar_open(&tar, tar_path, "w");
         
+
+        sprintf(ini_data_end, "\n[%s]\nx = %lu\ny = %lu\nz = %lu\n", file_base, max_p.x, max_p.y, max_p.z);
+        
         /* Write map file */
-        mtar_write_file_header(&tar, map_name, sizeof *map_bytes);
-        mtar_write_data(&tar, *map_bytes, sizeof *map_bytes);
+        int err = mtar_write_file_header(&tar, map_name, sizeof *map_bytes);
+        if (err){
+            fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
+            exit(1);
+        }
+        err = mtar_write_data(&tar, *map_bytes, sizeof *map_bytes);
+        if (err){
+            fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
+            exit(1);
+        }
         /* Write man file */
-        mtar_write_file_header(&tar, man_name, strlen(man_data));
-        mtar_write_data(&tar, man_data, strlen(man_data));
+        err = mtar_write_file_header(&tar, ini_name, strlen(ini_data));
+        if (err){
+            fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
+            exit(1);
+        }
+        err = mtar_write_data(&tar, ini_data, strlen(ini_data));
+        if (err){
+            fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
+            exit(1);
+        }
         
         char * mat_name = calloc(100, sizeof(char));
         size_t mat_count = vector_size(mat_vec);
@@ -425,8 +479,8 @@ int main(int argc, char * argv[]) {
         mtar_close(&tar);
         
         free(map_name);
-        free(man_name);
-        free(man_data);
+        free(ini_name);
+        free(ini_data);
         free(mat_name);
     }
     
