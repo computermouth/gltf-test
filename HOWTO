@@ -4,3 +4,9 @@ blender:
 	textures are geometry -> vector(scale) -> image -> material output (howto.png)
 	when copying a mesh, use duplicate, not copy/paste
 	blender -> file -> external data -> automatically pack
+
+models/uv/texture:
+	select dude, edit mode, 'a' to select all of model, UV -> smart project
+	texture paint -> tool -> single image mode -> new image -> "some texture"
+	paint
+	material -> new -> base color -> image texture -> "some texture"

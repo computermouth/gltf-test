@@ -309,6 +309,54 @@ pos3_t get_max_dimensions(cgltf_data * data) {
     return max_xyz;
 }
 
+bool find_ztest(cgltf_data * data){
+    
+    for (size_t i = 0; i < data->nodes_count; ++i) {
+        cgltf_node * n = &(data->nodes[i]);
+        if (strcmp("__ztest", n->name) == 0){
+            
+            cgltf_float m[16] = {0};
+            cgltf_node_transform_world(n, m);
+    
+            cgltf_mesh* mesh = n->mesh;
+            if(!mesh) return false;
+            if(mesh->primitives_count != 1) return false;
+            
+            cgltf_primitive* primitive = &mesh->primitives[0];
+            if(!primitive) return false;
+            if(primitive->attributes_count == 0) return false;
+            if(strcmp(primitive->attributes[0].name, "POSITION") != 0) return false;
+            
+            // Access the positions of the primitive
+            cgltf_accessor* position_accessor = primitive->attributes[0].data;
+            cgltf_buffer_view* position_view = position_accessor->buffer_view;
+            cgltf_buffer* position_buffer = position_view->buffer;
+            float* positions = (float*)(position_buffer->data + position_view->offset + position_accessor->offset);
+
+            size_t position_count = position_accessor->count;
+            size_t position_stride = position_accessor->stride / sizeof(float);
+
+            // Apply the transformation matrix to each vertex position
+            for (size_t k = 0; k < position_count; ++k) {
+                float x = positions[k * position_stride];
+                float y = positions[k * position_stride + 1];
+                float z = positions[k * position_stride + 2];
+
+                // Apply the transformation matrix to the vertex position
+                float transformedX = x * m[0] + y * m[4] + z * m[8] + m[12];
+                float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
+                float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
+                
+                // skip if negative
+                if(transformedX >= 0 || transformedY >= 0 || transformedZ >= 0)
+                    return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
 int main(int argc, char * argv[]) {
 
     if (argc != 3) {
@@ -334,6 +382,12 @@ int main(int argc, char * argv[]) {
 
     if (result != cgltf_result_success) {
         fprintf(stderr, "Failed to load buffers\n");
+        return 1;
+    }
+    
+    // validate y/z axis
+    if (!find_ztest(data)){
+        fprintf(stderr, "unable to find a node '__ztest' which has all vertices in negative space\n");
         return 1;
     }
     
@@ -495,6 +549,6 @@ int main(int argc, char * argv[]) {
     free(arr);
     vector_free(mat_vec);
     cgltf_free(data);
+(data);
 
-    return 0;
-}
+    retu

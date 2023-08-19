@@ -1,5 +1,5 @@
 a.out
-*.blend*
+*.blend[0-9]
 *.tar
 maps
 txtr
