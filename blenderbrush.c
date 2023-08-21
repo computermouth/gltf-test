@@ -20,11 +20,30 @@ typedef struct {
     uint64_t z;
 } pos3_t;
 
+typedef struct {
+    float x;
+    float y;
+    float z;
+} fpos3_t;
+    
+typedef struct {
+    uint8_t texture;
+    pos3_t start;
+    pos3_t end;
+} out_cube_t;
+    
+typedef struct {
+    fpos3_t fpos;
+} out_entt_t;
+
 vector * ref_cube_vec = NULL;
-vector * ref_model_vec = NULL;
+vector * ref_entt_vec = NULL;
 
 vector * map_cube_vec = NULL;
-vector * map_model_vec = NULL;
+vector * map_entt_vec = NULL;
+
+vector * out_cube_vec = NULL;
+vector * out_entt_vec = NULL;
 
 vector * mat_vec = NULL;
 
@@ -94,6 +113,17 @@ bool get_material_image_bytes(cgltf_material* material, char ** imageName, unsig
     return true;
 }
 
+void prep_out_cubes(){
+    
+    size_t len = vector_size(map_cube_vec);
+    cgltf_node ** n = vector_begin(map_cube_vec);
+    
+    for(size_t i = 0; i < len; i++){
+        fprintf(stderr, "pe: %s\n", n[i]->name);
+    }
+    
+}
+
 void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][max.y][max.z]) {
 
     fprintf(stderr, "nodes: %d\n", (int)data->nodes_count);
@@ -153,28 +183,12 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
                 float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
                 float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
                 
-                // REFERENCE MESHES
-                {
-                    // right-side negative -> cube
-                    if(transformedX > 0 && transformedY < 0 && transformedZ > 0){
-                        fprintf(stderr, "(cube) name: %s x: %f y: %f z: %f\n", mesh->name, transformedX, transformedY, transformedZ);
-                        vector_push(ref_cube_vec, &n);
-                        goto skip_negative;
-                    }
-                    
-                    // left-side negative -> entity
-                    if(transformedX < 0 && transformedY > 0 && transformedZ > 0){
-                        fprintf(stderr, "(enty) name: %s x: %f y: %f z: %f\n", mesh->name, transformedX, transformedY, transformedZ);
-                        vector_push(ref_model_vec, &n);
-                        goto skip_negative;
-                    }
-                    
-                    // all-negative -> __ztest
-                    if(transformedX < 0 && transformedY < 0 && transformedZ < 0){
-                        fprintf(stderr, "(ztst) name: %s x: %f y: %f z: %f\n", mesh->name, transformedX, transformedY, transformedZ);
-                        // no vector push -- to discard
-                        goto skip_negative;
-                    }
+                // Negative space, shouldn't be found
+                if(transformedX < 0 && transformedY < 0 && transformedZ < 0){
+                    fprintf(stderr, "W: encountered mesh('%s') in negative space {%ld, %ld, %ld}\n",
+                        mesh->name, (int64_t)transformedX, (int64_t)transformedY, (int64_t)transformedZ);
+                    vector_push(ref_cube_vec, &n);
+                    goto skip_oob;
                 }
 
                 // Calculate the integer indices of the transformed vertex position
@@ -208,13 +222,17 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
                 mesh_max_xyz.x, mesh_max_xyz.y, mesh_max_xyz.z,
                 max.x, max.y, max.z
             );
+            goto skip_oob;
         }
 
-        // Set the corresponding indices in the boolean map array
-        for (uint64_t x = mesh_min_xyz.x; x < mesh_max_xyz.x; ++x)
-            for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y)
-                for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z)
-                    (*arr)[x][y][z] = texture_id;
+        // old array packer
+        // // Set the corresponding indices in the boolean map array
+        // for (uint64_t x = mesh_min_xyz.x; x < mesh_max_xyz.x; ++x)
+        //     for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y)
+        //         for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z)
+        //             (*arr)[x][y][z] = texture_id;
+        
+        // vector_push()
 
         fprintf(stderr, "mesh: %s\n", mesh->name);
         fprintf(stderr, "  - { %lu, %lu, %lu } - { %lu, %lu, %lu }\n",
@@ -223,7 +241,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
         );
         
         // one or more indicies was in negative space
-        skip_negative:
+        skip_oob:
             continue;
     }
 
@@ -356,6 +374,12 @@ pos3_t group_meshes(cgltf_data * data){
                     mc = CLASS_REF;
                     goto skip_negative;
                 }
+                
+                // if it's an entity, don't expand min/max
+                // if it could, an entity off a platform would just fall
+                // and trip a underflow
+                if (mg == GROUP_ENTT)
+                    goto skip_negative;
 
                 // Calculate the integer indices of the transformed vertex position
                 uint64_t posX = (uint64_t)transformedX;
@@ -392,13 +416,13 @@ pos3_t group_meshes(cgltf_data * data){
                 switch (mg) {
                     case GROUP_CUBE:
                         // ref cube
-                        // todo vector_push(ref_cube_vec, &n);
-                        fprintf(stderr, "ref_cube_vec\n");
+                        vector_push(ref_cube_vec, &n);
+                        fprintf(stderr, "ref_cube_vec '%s'\n", n->name);
                         break;
                     case GROUP_ENTT: 
                         // ref entt
-                        // todo vector_push(ref_entt_vec, &n);
-                        fprintf(stderr, "ref_entt_vec\n");
+                        vector_push(ref_entt_vec, &n);
+                        fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
                         break;
                     default:
                         fprintf(stderr, "invalid group for ref node[%lu]('%s')\n", i, n->name);
@@ -409,13 +433,13 @@ pos3_t group_meshes(cgltf_data * data){
                 switch (mg) {
                     case GROUP_CUBE:
                         // map cube
-                        // todo vector_push(map_cube_vec, &n);
-                        fprintf(stderr, "map_cube_vec\n");
+                        vector_push(map_cube_vec, &n);
+                        fprintf(stderr, "map_cube_vec '%s'\n", n->name);
                         break;
                     case GROUP_ENTT: 
                         // map entt
-                        // todo vector_push(map_entt_vec, &n);
-                        fprintf(stderr, "map_entt_vec\n");
+                        vector_push(map_entt_vec, &n);
+                        fprintf(stderr, "map_entt_vec '%s'\n", n->name);
                         break;
                     default:
                         fprintf(stderr, "invalid group for map node[%lu]('%s')\n", i, n->name);
@@ -427,109 +451,6 @@ pos3_t group_meshes(cgltf_data * data){
                 break;
         }
         
-    }
-
-    // this is used later for alloc size
-    // so increase all dimensions by 1
-    max_xyz.x += 1;
-    max_xyz.y += 1;
-    max_xyz.z += 1;
-    
-    // check if the dimensions are too large
-    // todo, test
-    uint64_t rollover_xy = max_xyz.x * max_xyz.y;
-    if (max_xyz.x != 0 && rollover_xy / max_xyz.x != max_xyz.y){
-        // overflowed
-        fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
-        exit(1);
-    }
-    
-    uint64_t rollover_z = rollover_xy * max_xyz.z;
-    if (max_xyz.y != 0 && rollover_z / rollover_xy != max_xyz.z){
-        // overflowed
-        fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
-        exit(1);
-    }
-    
-    return max_xyz;
-}
-
-pos3_t get_max_dimensions(cgltf_data * data) {
-    
-    pos3_t max_xyz = { 0, 0, 0 };
-
-    // todo, skip entities
-    for (size_t i = 0; i < data->nodes_count; ++i) {
-
-        cgltf_node * n = &(data->nodes[i]);
-
-        cgltf_float m[16] = {0};
-        cgltf_node_transform_world(n, m);
-
-        cgltf_mesh* mesh = n->mesh;
-
-        // Calculate the dimensions of the primitive
-        pos3_t mesh_min_xyz = {UINT64_MAX, UINT64_MAX, UINT64_MAX};
-        pos3_t mesh_max_xyz = {0, 0, 0};
-
-        if (mesh->primitives_count > 1)
-            fprintf(stderr, "W: primitive_count > 1\n");
-
-        // Iterate over the primitives of the mesh
-        for (size_t j = 0; j < mesh->primitives_count; ++j) {
-
-            cgltf_primitive* primitive = &mesh->primitives[j];
-
-            // Access the positions of the primitive
-            cgltf_accessor* positionAccessor = primitive->attributes[0].data;
-            cgltf_buffer_view* positionView = positionAccessor->buffer_view;
-            cgltf_buffer* positionBuffer = positionView->buffer;
-            float* positions = (float*)(positionBuffer->data + positionView->offset + positionAccessor->offset);
-
-            size_t positionCount = positionAccessor->count;
-            size_t positionStride = positionAccessor->stride / sizeof(float);
-
-            // Apply the transformation matrix to each vertex position
-            for (size_t k = 0; k < positionCount; ++k) {
-                float x = positions[k * positionStride];
-                float y = positions[k * positionStride + 1];
-                float z = positions[k * positionStride + 2];
-
-                // Apply the transformation matrix to the vertex position
-                float transformedX = x * m[0] + y * m[4] + z * m[8] + m[12];
-                float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
-                float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
-
-                // Calculate the integer indices of the transformed vertex position
-                uint64_t posX = (uint64_t)transformedX;
-                uint64_t posY = (uint64_t)transformedY;
-                uint64_t posZ = (uint64_t)transformedZ;
-
-                // Update the minimum and maximum positions
-                mesh_min_xyz.x = (uint64_t)fmin(mesh_min_xyz.x, posX);
-                mesh_min_xyz.y = (uint64_t)fmin(mesh_min_xyz.y, posY);
-                mesh_min_xyz.z = (uint64_t)fmin(mesh_min_xyz.z, posZ);
-
-                mesh_max_xyz.x = (uint64_t)fmax(mesh_max_xyz.x, posX);
-                mesh_max_xyz.y = (uint64_t)fmax(mesh_max_xyz.y, posY);
-                mesh_max_xyz.z = (uint64_t)fmax(mesh_max_xyz.z, posZ);
-            }
-        }
-
-        // find the largest index in the mesh, and check against max
-        for (uint64_t x = mesh_min_xyz.x; x < mesh_max_xyz.x; ++x) {
-            for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y) {
-                for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z) {
-                    if (x > max_xyz.x) max_xyz.x = x;
-                    if (y > max_xyz.y) max_xyz.y = y;
-                    if (z > max_xyz.z) max_xyz.z = z;
-                }
-            }
-        }
-        
-        // one or more indicies was in negative space
-        skip_negative:
-            continue;
     }
 
     // this is used later for alloc size
@@ -639,11 +560,14 @@ int main(int argc, char * argv[]) {
         return 1;
     }
     
-    // ref_cube_vec = vector_init(sizeof(cgltf_node *));
-    // map_cube_vec = vector_init(sizeof(cgltf_node *));
+    ref_cube_vec = vector_init(sizeof(cgltf_node *));
+    map_cube_vec = vector_init(sizeof(cgltf_node *));
     
-    // ref_model_vec = vector_init(sizeof(cgltf_node *));
-    // map_model_vec = vector_init(sizeof(cgltf_node *));
+    ref_entt_vec = vector_init(sizeof(cgltf_node *));
+    map_entt_vec = vector_init(sizeof(cgltf_node *));
+    
+    out_cube_vec = vector_init(sizeof(out_cube_t));
+    out_entt_vec = vector_init(sizeof(out_entt_t));
     
     pos3_t max_p = group_meshes(data);
     uint8_t (*arr)[max_p.x][max_p.y][max_p.z] = calloc(1, sizeof *arr);
@@ -653,7 +577,9 @@ int main(int argc, char * argv[]) {
         exit(1);
     }
     
-    uint8_t (*map_bytes)[max_p.x * max_p.y * max_p.z] = (uint8_t (*)[])(*arr);
+    // uint8_t (*map_bytes)[max_p.x * max_p.y * max_p.z] = (uint8_t (*)[])(*arr);
+    
+    prep_out_cubes();
     
     goto cleanup;
     
