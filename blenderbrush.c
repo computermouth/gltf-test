@@ -25,22 +25,27 @@ typedef struct {
     float y;
     float z;
 } fpos3_t;
+
+typedef struct {
+    size_t len;
+    uint8_t * data;
+} txtr_t;
     
 typedef struct {
-    cgltf_image* image;
+    txtr_t txtr;
     fpos3_t start;
-    fpos3_t end;
+    fpos3_t size;
 } rm_cube_t;
     
 typedef struct {
-    cgltf_image* image;
+    txtr_t txtr;
     fpos3_t fpos;
 } rm_entt_t;
     
 typedef struct {
     uint8_t texture;
     pos3_t start;
-    pos3_t end;
+    pos3_t size;
 } out_cube_t;
     
 typedef struct {
@@ -57,56 +62,23 @@ vector * map_entt_vec = NULL;
 vector * out_cube_vec = NULL;
 vector * out_entt_vec = NULL;
 
-// uint8_t get_cube_material_index(cgltf_material * material) {
-//     // todo, what if there's 256+ textures?
-//     size_t len = vector_size(mat_vec);
-//     for(int i = 0; i < len; i++) {
-//         cgltf_material ** out = vector_at(mat_vec, i);
-//         if( material == *out)
-//             return i + 1;
-//     }
-
-//     return 0;
-// }
-
-bool get_image_bytes(cgltf_image * image, char ** imageName, unsigned char** imageBytes, size_t* imageSize) {
-
-    if (image->uri != NULL && strlen(image->uri) > 0) {
-        fprintf(stderr, "URI-based images are not supported in this example.\n");
-        return false;
-    }
-
-    if (image->buffer_view == NULL) {
-        fprintf(stderr, "Image does not have a buffer view.\n");
-        return false;
-    }
-
-    fprintf(stderr, "found image: %s.png\n", image->name);
-
-    *imageName = image->name;
-    *imageBytes = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset);
-    *imageSize = image->buffer_view->size;
-
-    return true;
-}
-
-cgltf_image * get_image_ptr(cgltf_node* node) {
+txtr_t get_image(cgltf_node* node) {
 
     if (node->mesh == NULL){
         fprintf(stderr, "Node does not have a mesh.\n");
-        return NULL;
+        return (txtr_t){0};
     }
 
     cgltf_mesh * mesh = node->mesh;
     if (mesh->primitives == NULL){
         fprintf(stderr, "Mesh does not have primitives.\n");
-        return NULL;
+        return (txtr_t){0};
     }
 
     cgltf_primitive prim = mesh->primitives[0];
     if (prim.material == NULL){
         fprintf(stderr, "Primitive does not have a material.\n");
-        return NULL;
+        return (txtr_t){0};
     }
     
     cgltf_material * material = prim.material;
@@ -114,32 +86,93 @@ cgltf_image * get_image_ptr(cgltf_node* node) {
 
     if (pbr->base_color_texture.texture == NULL) {
         fprintf(stderr, "Material does not have an associated texture.\n");
-        return false;
+        return (txtr_t){0};
     }
 
     cgltf_texture* texture_view = pbr->base_color_texture.texture;
 
     if (texture_view->image == NULL) {
         fprintf(stderr, "Texture does not have an associated image.\n");
-        return false;
+        return (txtr_t){0};
     }
 
     cgltf_image* image = texture_view->image;
+
+    if (image->uri != NULL && strlen(image->uri) > 0) {
+        fprintf(stderr, "URI-based images are not supported in this example.\n");
+        return (txtr_t){0};
+    }
+
+    if (image->buffer_view == NULL) {
+        fprintf(stderr, "Image does not have a buffer view.\n");
+        return (txtr_t){0};
+    }
+
+    fprintf(stderr, "found image: %s.png\n", image->name);
     
-    return image;
+    return (txtr_t){
+        .len = image->buffer_view->size,
+        .data = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset)
+    };
 }
 
-void prep_out_cubes(){
-    
-    // size_t len = vector_size(map_cube_vec);
-    // cgltf_node ** n = vector_begin(map_cube_vec);
-    
-    // for(size_t i = 0; i < len; i++){
-    //     fprintf(stderr, "pe: %s\n", n[i]->name);
-    // }
-    
+int32_t find_cube_txtr_id(uint8_t * txtr_data){
+    size_t len = vector_size(ref_cube_vec);
+    if(len > 255)
+        fprintf(stderr, "W: found more than 255 cube textures!");
+    for(size_t i = 0; i < len; i++){
+        rm_cube_t * ref_cube = vector_at(ref_cube_vec, i);
+        if (ref_cube->txtr.data == txtr_data)
+            return i;
+    }
+    fprintf(stderr, "null?: %p\n", txtr_data);
+    return -1;
 }
 
+int32_t find_entt_txtr_id(uint8_t * txtr_data){
+    size_t len = vector_size(ref_entt_vec);
+    rm_cube_t ** ref_entts = vector_begin(ref_entt_vec);
+    for(size_t i = 0; i < len; i++){
+        if (ref_entts[i]->txtr.data == txtr_data)
+            return i;
+    }
+    return -1;
+}
+
+void prep_out(){
+    
+    size_t len = 0;
+    
+    // cube textures -> out_tex
+    len = vector_size(map_cube_vec);
+    for(size_t i = 0; i < len; i++){
+        rm_cube_t * cube = vector_at(map_cube_vec, i);
+        // int32_t texture_id = 0;
+        int32_t texture_id = find_cube_txtr_id(cube->txtr.data);
+        // if (texture_id < 0 || texture_id > 254)
+        //     continue;
+        
+        out_cube_t oc = {
+            .start = {
+                .x = (uint64_t)cube->start.x,
+                .y = (uint64_t)cube->start.y,
+                .z = (uint64_t)cube->start.z,
+            },
+            .size = { // todo, do some rounding?
+                .x = (uint64_t)cube->size.x,
+                .y = (uint64_t)cube->size.y,
+                .z = (uint64_t)cube->size.z,
+            },
+            .texture = (uint8_t)texture_id,
+        };
+        
+        vector_push(out_cube_vec, &oc);
+    }
+    
+    fprintf(stderr, "outcubelen: %zu\n", vector_size(out_cube_vec));
+    
+}
+/*
 void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][max.y][max.z]) {
 
     fprintf(stderr, "nodes: %d\n", (int)data->nodes_count);
@@ -264,7 +297,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
     // Clean up cgltf resources
     // cgltf_free(data);
 }
-
+*/
 bool node_is_cube(cgltf_node * node){
     if(node->extras.data == NULL)
         return false;
@@ -387,12 +420,12 @@ pos3_t group_meshes(cgltf_data * data){
                 switch (mg) {
                     case GROUP_CUBE:
                         // ref cube
-                        vector_push(ref_cube_vec, &(rm_cube_t){.image = get_image_ptr(n), .start = start, .end = end});
+                        vector_push(ref_cube_vec, &(rm_cube_t){.txtr = get_image(n), .start = start, .size = size});
                         fprintf(stderr, "ref_cube_vec '%s'\n", n->name);
                         break;
                     case GROUP_ENTT: 
                         // ref entt
-                        vector_push(ref_entt_vec, &(rm_entt_t){.image = get_image_ptr(n), .fpos = start});
+                        vector_push(ref_entt_vec, &(rm_entt_t){.txtr = get_image(n), .fpos = start});
                         fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
                         break;
                     default:
@@ -404,12 +437,12 @@ pos3_t group_meshes(cgltf_data * data){
                 switch (mg) {
                     case GROUP_CUBE:
                         // map cube
-                        vector_push(map_cube_vec, &(rm_cube_t){.image = get_image_ptr(n), .start = start, .end = end});
+                        vector_push(map_cube_vec, &(rm_cube_t){.txtr = get_image(n), .start = start, .size = size});
                         fprintf(stderr, "map_cube_vec '%s'\n", n->name);
                         break;
                     case GROUP_ENTT: 
                         // map entt
-                        vector_push(map_entt_vec, &(rm_entt_t){.image = get_image_ptr(n), .fpos = start});
+                        vector_push(map_entt_vec, &(rm_entt_t){.txtr = get_image(n), .fpos = start});
                         fprintf(stderr, "map_entt_vec '%s'\n", n->name);
                         break;
                     default:
@@ -484,7 +517,7 @@ int main(int argc, char * argv[]) {
     
     // uint8_t (*map_bytes)[max_p.x * max_p.y * max_p.z] = (uint8_t (*)[])(*arr);
     
-    prep_out_cubes();
+    prep_out();
     
     goto cleanup;
 
