@@ -11,6 +11,7 @@
 #include "microtar.h"
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
+#include "mpack.h"
 
 #define JSON_MAX_TOKENS 64
 
@@ -131,9 +132,9 @@ int32_t find_cube_txtr_id(uint8_t * txtr_data){
 
 int32_t find_entt_txtr_id(uint8_t * txtr_data){
     size_t len = vector_size(ref_entt_vec);
-    rm_cube_t ** ref_entts = vector_begin(ref_entt_vec);
     for(size_t i = 0; i < len; i++){
-        if (ref_entts[i]->txtr.data == txtr_data)
+        rm_entt_t * ref_entt = vector_at(ref_entt_vec, i);
+        if (ref_entt->txtr.data == txtr_data)
             return i;
     }
     return -1;
@@ -143,7 +144,7 @@ void prep_out(){
     
     size_t len = 0;
     
-    // cube textures -> out_tex
+    // map cube -> out cube
     len = vector_size(map_cube_vec);
     for(size_t i = 0; i < len; i++){
         rm_cube_t * cube = vector_at(map_cube_vec, i);
@@ -169,7 +170,29 @@ void prep_out(){
         vector_push(out_cube_vec, &oc);
     }
     
+    // map entt -> out entt
+    len = vector_size(map_entt_vec);
+    for(size_t i = 0; i < len; i++){
+        rm_entt_t * entt = vector_at(map_entt_vec, i);
+        // int32_t texture_id = 0;
+        int32_t texture_id = find_entt_txtr_id(entt->txtr.data);
+        // if (texture_id < 0 || texture_id > 254)
+        //     continue;
+        
+        out_entt_t oe = {
+            .fpos = {
+                .x = entt->fpos.x,
+                .y = entt->fpos.y,
+                .z = entt->fpos.z,
+            },
+            .texture = (uint8_t)texture_id,
+        };
+        
+        vector_push(out_entt_vec, &oe);
+    }
+    
     fprintf(stderr, "outcubelen: %zu\n", vector_size(out_cube_vec));
+    fprintf(stderr, "outenttlen: %zu\n", vector_size(out_entt_vec));
     
 }
 /*
@@ -515,156 +538,128 @@ int main(int argc, char * argv[]) {
     
     pos3_t max_p = group_meshes(data);
     
-    // uint8_t (*map_bytes)[max_p.x * max_p.y * max_p.z] = (uint8_t (*)[])(*arr);
-    
     prep_out();
     
-    goto cleanup;
-
-    // Call the function to map the meshes to the boolean array
-    // map_meshes_to_array(data, max_p, arr);
+// typedef struct {
+//     size_t len;
+//     uint8_t * data;
+// } txtr_t;
     
-    // todo, msgpack
+// typedef struct {
+//     txtr_t txtr;
+//     fpos3_t start;
+//     fpos3_t size;
+// } rm_cube_t;
     
-    // C source print
-    // fprintf(stdout, "uint8_t %s[%lu][%lu][%lu] = {\n", argv[1], max_p.x, max_p.y, max_p.z);
-    // for(int x = 0; x < max_p.x; x++){
-    //     fprintf(stdout, "\t{\n");
-    //     for(int y = 0; y < max_p.y; y++){
-    //         fprintf(stdout, "\t\t{");
-    //         for(int z = 0; z < max_p.z; z++){
-    //             fprintf(stdout, "%u", (*arr)[x][y][z]);
-    //             if (z != max_p.z - 1)
-    //                 fprintf(stdout, ",");
-    //         }
-    //         fprintf(stdout, "},\n");
-    //     }
-    //     fprintf(stdout, "\t},\n");
-    // }
-    // fprintf(stdout, "};\n");
+// typedef struct {
+//     txtr_t txtr;
+//     fpos3_t fpos;
+// } rm_entt_t;
     
-    // char * file_base = basename(argv[1]);
-    // char * gltf_subs = strstr(file_base, ".gl");
-    // if (gltf_subs == NULL){
-    //     fprintf(stderr, "couldn't find a .{gltf,glb} suffix");
-    //     return 1;
-    // }
-    // gltf_subs[0] = '\0';
+    // mpack time
+    // encode to memory buffer
+    char* mp_data;
+    size_t size;
+    mpack_writer_t writer;
+    mpack_writer_init_growable(&writer, &mp_data, &size);
     
-    // {
-    //     mtar_t tar;
-        
-    //     /* Open archive for reading in old ini */
-    //     int open_err = mtar_open(&tar, tar_path, "r");
-    //     if (open_err && open_err != MTAR_EOPENFAIL){
-    //         fprintf(stderr, "E: failed to open %s -- %s\n", tar_path, mtar_strerror(open_err));
-    //         exit(1);
-    //     }
-        
-    //     // maps/ + strlen(name) + .map + \0
-    //     char * map_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
-    //     char * ini_name = calloc(strlen(file_base) + 5 + 4 + 1, sizeof(char));
-    //     char * ini_data = calloc(500, sizeof(char));
-    //     char * ini_data_end = ini_data;
-        
-    //     sprintf(map_name, "maps/%s.map", file_base);
-    //     // todo, one manifest file for all maps
-    //     sprintf(ini_name, "maps/%s.ini", file_base);
-        
-    //     if (!open_err) {
-    //         mtar_header_t ini_header;
-    //         int err = mtar_find(&tar, ini_name, &ini_header);
-    //         if (err && err != MTAR_ENOTFOUND){
-    //             fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
-    //             exit(1);
-    //         }
-    //         // found it
-    //         if (!err) {
-    //             ini_data = realloc(ini_data, ini_header.size + 500 + 1);
-    //             // overkill, could just set new data
-    //             // but easier math c:
-    //             memset(ini_data, 0, ini_header.size + 500 + 1);
-    //             err = mtar_read_data(&tar, ini_data, ini_header.size);
-    //             if (err){
-    //                 fprintf(stderr, "E: failed to search for %s\n", ini_name);
-    //                 exit(1);
-    //             }
-    //             // fprintf(stderr, "ini_data: %s\n", ini_data);
-    //             ini_data_end = &(ini_data[ini_header.size]);
-    //             // fprintf(stderr, "ini_data_end: %s\n", ini_data_end);
-    //         }
+    // root map
+    mpack_build_map(&writer);
+    
+    // cube textures
+    {
+        mpack_write_cstr(&writer, "tex_cubes");
+        size_t rclen = vector_size(ref_cube_vec);
+        mpack_start_array(&writer, rclen);
+        for(size_t i = 0; i < rclen; i++){
+            rm_cube_t * rc = vector_at(ref_cube_vec, i);
+            mpack_start_bin(&writer, rc->txtr.len);
+            mpack_write_bytes(&writer, (char *)rc->txtr.data, rc->txtr.len);
+            mpack_finish_bin(&writer);
+        }
+        mpack_finish_array(&writer);
+    }
+    
+    // entt textures (todo, verticies per frame, uv)
+    {
+        mpack_write_cstr(&writer, "tex_entts");
+        size_t ntlen = vector_size(ref_entt_vec);
+        mpack_start_array(&writer, ntlen);
+        for(size_t i = 0; i < ntlen; i++){
+            rm_entt_t * re = vector_at(ref_entt_vec, i);
+            mpack_start_bin(&writer, re->txtr.len);
+            mpack_write_bytes(&writer, (char *)re->txtr.data, re->txtr.len);
+            mpack_finish_bin(&writer);
+        }
+        mpack_finish_array(&writer);
+    }
+    
+    // map cubes
+    {
+        mpack_write_cstr(&writer, "map_cubes");
+        size_t mclen = vector_size(out_cube_vec);
+        mpack_start_array(&writer, mclen);
+        for(size_t i = 0; i < mclen; i++){
+            out_cube_t * oc = vector_at(out_cube_vec, i);
+            mpack_start_map(&writer, 3);
             
-    //         mtar_close(&tar);
-    //     }
-    //     tar = (mtar_t){ 0 };
-    //     /* Open archive for writing(append) */
-    //     mtar_open(&tar, tar_path, "w");
-        
-
-    //     sprintf(ini_data_end, "\n[%s]\nx = %lu\ny = %lu\nz = %lu\n", file_base, max_p.x, max_p.y, max_p.z);
-        
-    //     /* Write map file */
-    //     int err = mtar_write_file_header(&tar, map_name, sizeof *map_bytes);
-    //     if (err){
-    //         fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
-    //         exit(1);
-    //     }
-    //     err = mtar_write_data(&tar, *map_bytes, sizeof *map_bytes);
-    //     if (err){
-    //         fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
-    //         exit(1);
-    //     }
-    //     /* Write man file */
-    //     err = mtar_write_file_header(&tar, ini_name, strlen(ini_data));
-    //     if (err){
-    //         fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
-    //         exit(1);
-    //     }
-    //     err = mtar_write_data(&tar, ini_data, strlen(ini_data));
-    //     if (err){
-    //         fprintf(stderr, "E: failed to search for %s -- %s\n", ini_name, mtar_strerror(err));
-    //         exit(1);
-    //     }
-        
-    //     char * mat_name = calloc(100, sizeof(char));
-    //     size_t mat_count = vector_size(mat_vec);
-    //     for(size_t i = 0; i < mat_count; i++){
-    //         cgltf_material ** mat_p = vector_at(mat_vec, i);
-    //         cgltf_material * mat_m = *mat_p;
-    //         memset(mat_name, 0, 100);
+            mpack_write_cstr(&writer, "tex_id");
+            mpack_write_u8(&writer, oc->texture);
             
-    //         char * img_name = NULL;
-    //         unsigned char * img_bytes = NULL;
-    //         size_t img_size = 0;
-    //         get_material_image_bytes(mat_m, &img_name, &img_bytes, &img_size);
-    //         snprintf(mat_name, 99, "txtr/%s.png", img_name);
+            mpack_write_cstr(&writer, "start");
+            mpack_start_array(&writer, 3);
+            mpack_write_u64(&writer, oc->start.x);
+            mpack_write_u64(&writer, oc->start.y);
+            mpack_write_u64(&writer, oc->start.z);
+            mpack_finish_array(&writer);
             
-    //         /* Write image file */
-    //         mtar_write_file_header(&tar, mat_name, img_size);
-    //         mtar_write_data(&tar, img_bytes, img_size);
-    //     }
-        
-    //     /* Finalize -- this needs to be the last thing done before closing */
-    //     mtar_finalize(&tar);
-        
-    //     /* Close archive */
-    //     mtar_close(&tar);
-        
-    //     free(map_name);
-    //     free(ini_name);
-    //     free(ini_data);
-    //     free(mat_name);
-    // }
+            mpack_write_cstr(&writer, "size");
+            mpack_start_array(&writer, 3);
+            mpack_write_u64(&writer, oc->size.x);
+            mpack_write_u64(&writer, oc->size.y);
+            mpack_write_u64(&writer, oc->size.z);
+            mpack_finish_array(&writer);
+            
+            mpack_finish_map(&writer);
+        }
+        mpack_finish_array(&writer);
+    }
     
+    // map entts
+    {
+        mpack_write_cstr(&writer, "map_entts");
+        size_t melen = vector_size(out_entt_vec);
+        mpack_start_array(&writer, melen);
+        for(size_t i = 0; i < melen; i++){
+            out_entt_t * oe = vector_at(out_entt_vec, i);
+            mpack_start_map(&writer, 2);
+            
+            mpack_write_cstr(&writer, "tex_id");
+            mpack_write_u8(&writer, oe->texture);
+            
+            mpack_write_cstr(&writer, "pos");
+            mpack_start_array(&writer, 3);
+            mpack_write_float(&writer, oe->fpos.x);
+            mpack_write_float(&writer, oe->fpos.y);
+            mpack_write_float(&writer, oe->fpos.z);
+            mpack_finish_array(&writer);
+            
+            mpack_finish_map(&writer);
+        }
+        mpack_finish_array(&writer);
+    }
     
-    // // byte map print
-    // fprintf(stdout, "%lu,%lu,%lu\n", max_p.x, max_p.y, max_p.z);
-    // for(int x = 0; x < max_p.x; x++)
-    //     for(int y = 0; y < max_p.y; y++)
-    //         for(int z = 0; z < max_p.z; z++)
-    //             fprintf(stdout, "%c", (*arr)[x][y][z]);
+    mpack_complete_map(&writer);
     
-    cleanup:
+    // finish writing
+    if (mpack_writer_destroy(&writer) != mpack_ok) {
+        fprintf(stderr, "An error occurred encoding the data!\n");
+    }
+    
+    // fwrite some shit
+    fwrite(mp_data, sizeof(char), size, stdout);
+    
+    free(mp_data);
     
     vector_free(ref_cube_vec);
     vector_free(map_cube_vec);
