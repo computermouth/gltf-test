@@ -13,8 +13,10 @@
 			break;
 		}
 	}
+	
+	if (!uvAttribute)
+		return -1;
 
-	if (uvAttribute) {
 		cgltf_accessor* uvAccessor = uvAttribute->data;
 		cgltf_buffer_view* uvBufferView = uvAccessor->buffer_view;
 		cgltf_buffer* uvBuffer = uvBufferView->buffer;
@@ -33,10 +35,6 @@
 			// For example, you can print them:
 			printf("UV %zu: u = %f, v = %f\n", i, u, v);
 		}
-	} else {
-		// Handle the case where TEXCOORD_0 attribute is not found
-	}
-
 }
 
 // GET FROM ABOVE FUNCTION

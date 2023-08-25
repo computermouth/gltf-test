@@ -31,24 +31,32 @@ typedef struct {
     size_t len;
     uint8_t * data;
 } txtr_t;
-    
+
+typedef struct {
+    vector * u;
+    vector * v;
+    vector * anim_names;
+    vector * anim_frames;
+} verts_t;
+
 typedef struct {
     txtr_t txtr;
     fpos3_t start;
     fpos3_t size;
 } rm_cube_t;
-    
+
 typedef struct {
+    verts_t verts;
     txtr_t txtr;
     fpos3_t fpos;
 } rm_entt_t;
-    
+
 typedef struct {
     uint8_t texture;
     pos3_t start;
     pos3_t size;
 } out_cube_t;
-    
+
 typedef struct {
     uint8_t texture;
     fpos3_t fpos;
@@ -63,65 +71,190 @@ vector * map_entt_vec = NULL;
 vector * out_cube_vec = NULL;
 vector * out_entt_vec = NULL;
 
+
+// turn this into
+// POSITION
+// TEXCOORD_0 (UV)
+// abstraction
+
+char * default_frame_name = "default";
+
+verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
+
+    verts_t out_v = {0};
+
+    // Find the index of the TEXCOORD_0 attribute
+    cgltf_attribute* uvAttribute = NULL;
+    for (cgltf_size i = 0; i < mesh->primitives[0].attributes_count; ++i) {
+        if (strcmp(mesh->primitives[0].attributes[i].name, "TEXCOORD_0") == 0) {
+            uvAttribute = &mesh->primitives[0].attributes[i];
+            break;
+        }
+    }
+
+    // Find the index of the POSITION attribute
+    cgltf_attribute* position_attribute = NULL;
+    for (cgltf_size i = 0; i < mesh->primitives[0].attributes_count; ++i) {
+        if (strcmp(mesh->primitives[0].attributes[i].name, "POSITION") == 0) {
+            position_attribute = &mesh->primitives[0].attributes[i];
+            break;
+        }
+    }
+
+    if (!uvAttribute || !position_attribute) {
+        fprintf(stderr, "E: missing uv or position attribute\n");
+        return out_v;
+    }
+
+    cgltf_accessor* uvAccessor = uvAttribute->data;
+    cgltf_buffer_view* uvBufferView = uvAccessor->buffer_view;
+    cgltf_buffer* uvBuffer = uvBufferView->buffer;
+
+    cgltf_accessor* position_accessor = position_attribute->data;
+
+    if(position_accessor->count != uvAccessor->count) {
+        fprintf(stderr, "E: position count doesn't match uv count\n");
+        return out_v;
+    }
+
+    // get uv values
+    size_t uvCount = uvAccessor->count;
+    size_t uvOffset = uvAccessor->offset + uvBufferView->offset;
+    float* uvData = (float*)(uvBuffer->data + uvOffset);
+
+    // get position
+    for (size_t i = 0; i < mesh->target_names_count; ++i) {
+        fprintf(stderr, "morph_target: %s\n", mesh->target_names[i]);
+    }
+
+    // done
+    out_v.u = vector_init(sizeof(float));
+    out_v.v = vector_init(sizeof(float));
+    for(size_t i = 0; i < uvCount; i++) {
+        vector_push(out_v.u, &(uvData[i * 2 + 0]));
+        vector_push(out_v.v, &(uvData[i * 2 + 1]));
+    }
+
+    // push target names
+    out_v.anim_names = vector_init(sizeof(char *));
+    vector_push(out_v.anim_names, &default_frame_name);
+    for(size_t i = 0; i < mesh->target_names_count; i++)
+        vector_push(out_v.anim_names, &(mesh->target_names[i]));
+
+    // push default frame
+    out_v.anim_frames = vector_init(sizeof(fpos3_t) * uvCount);
+    fpos3_t * tmp_frame = malloc(sizeof(fpos3_t) * uvCount);
+    for(size_t i = 0; i < position_accessor->count; i++) {
+        cgltf_float tmp[3];
+        cgltf_accessor_read_float(position_accessor, i, tmp, 3);
+        tmp_frame[i].x = tmp[0];
+        tmp_frame[i].y = tmp[1];
+        tmp_frame[i].z = tmp[2];
+    }
+    vector_push(out_v.anim_frames, tmp_frame);
+    fpos3_t * default_frame = vector_at(out_v.anim_frames, 0);
+
+    // create and push target frames
+    cgltf_primitive * tmp_prim = &(mesh->primitives[0]);
+    for(size_t i = 0; i < tmp_prim->targets_count; i++) {
+        cgltf_morph_target* morphTarget = &(tmp_prim->targets[i]);
+        // ought to check if attributes[0] is POSITION
+        cgltf_attribute* morphPositionAttr = &morphTarget->attributes[0];
+        fprintf(stderr, "name: %s\n", morphPositionAttr->name);
+
+        cgltf_accessor* morph_position_accessor = morphPositionAttr->data;
+        cgltf_buffer_view* morph_position_buffer_view = morph_position_accessor->buffer_view;
+        cgltf_buffer* morph_position_buffer = morph_position_buffer_view->buffer;
+
+        for(size_t j = 0; j < morph_position_accessor->count; j++) {
+            cgltf_float tmp[3];
+            bool ok = cgltf_accessor_read_float(morph_position_accessor, j, tmp, 3);
+            tmp_frame[j].x += tmp[0];
+            tmp_frame[j].y += tmp[1];
+            tmp_frame[j].z += tmp[2];
+        }
+        vector_push(out_v.anim_frames, tmp_frame);
+        // reset tmp_frame to default
+        memcpy(tmp_frame, default_frame, sizeof(fpos3_t) * uvCount);
+    }
+    free(tmp_frame);
+
+    return out_v;
+}
+
 txtr_t get_image(cgltf_node* node) {
 
-    if (node->mesh == NULL){
+    if (node->mesh == NULL) {
         fprintf(stderr, "Node does not have a mesh.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     cgltf_mesh * mesh = node->mesh;
-    if (mesh->primitives == NULL){
+    if (mesh->primitives == NULL) {
         fprintf(stderr, "Mesh does not have primitives.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     cgltf_primitive prim = mesh->primitives[0];
-    if (prim.material == NULL){
+    if (prim.material == NULL) {
         fprintf(stderr, "Primitive does not have a material.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
-    
+
     cgltf_material * material = prim.material;
     cgltf_pbr_metallic_roughness* pbr = &material->pbr_metallic_roughness;
 
     if (pbr->base_color_texture.texture == NULL) {
         fprintf(stderr, "Material does not have an associated texture.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     cgltf_texture* texture_view = pbr->base_color_texture.texture;
 
     if (texture_view->image == NULL) {
         fprintf(stderr, "Texture does not have an associated image.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     cgltf_image* image = texture_view->image;
 
     if (image->uri != NULL && strlen(image->uri) > 0) {
         fprintf(stderr, "URI-based images are not supported in this example.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     if (image->buffer_view == NULL) {
         fprintf(stderr, "Image does not have a buffer view.\n");
-        return (txtr_t){0};
+        return (txtr_t) {
+            0
+        };
     }
 
     fprintf(stderr, "found image: %s.png\n", image->name);
-    
-    return (txtr_t){
+
+    return (txtr_t) {
         .len = image->buffer_view->size,
         .data = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset)
     };
 }
 
-int32_t find_cube_txtr_id(uint8_t * txtr_data){
+int32_t find_cube_txtr_id(uint8_t * txtr_data) {
     size_t len = vector_size(ref_cube_vec);
     if(len > 255)
         fprintf(stderr, "W: found more than 255 cube textures!");
-    for(size_t i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++) {
         rm_cube_t * ref_cube = vector_at(ref_cube_vec, i);
         if (ref_cube->txtr.data == txtr_data)
             return i;
@@ -130,9 +263,9 @@ int32_t find_cube_txtr_id(uint8_t * txtr_data){
     return -1;
 }
 
-int32_t find_entt_txtr_id(uint8_t * txtr_data){
+int32_t find_entt_txtr_id(uint8_t * txtr_data) {
     size_t len = vector_size(ref_entt_vec);
-    for(size_t i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++) {
         rm_entt_t * ref_entt = vector_at(ref_entt_vec, i);
         if (ref_entt->txtr.data == txtr_data)
             return i;
@@ -140,19 +273,19 @@ int32_t find_entt_txtr_id(uint8_t * txtr_data){
     return -1;
 }
 
-void prep_out(){
-    
+void prep_out() {
+
     size_t len = 0;
-    
+
     // map cube -> out cube
     len = vector_size(map_cube_vec);
-    for(size_t i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++) {
         rm_cube_t * cube = vector_at(map_cube_vec, i);
         // int32_t texture_id = 0;
         int32_t texture_id = find_cube_txtr_id(cube->txtr.data);
         // if (texture_id < 0 || texture_id > 254)
         //     continue;
-        
+
         out_cube_t oc = {
             .start = {
                 .x = (uint64_t)cube->start.x,
@@ -166,19 +299,19 @@ void prep_out(){
             },
             .texture = (uint8_t)texture_id,
         };
-        
+
         vector_push(out_cube_vec, &oc);
     }
-    
+
     // map entt -> out entt
     len = vector_size(map_entt_vec);
-    for(size_t i = 0; i < len; i++){
+    for(size_t i = 0; i < len; i++) {
         rm_entt_t * entt = vector_at(map_entt_vec, i);
         // int32_t texture_id = 0;
         int32_t texture_id = find_entt_txtr_id(entt->txtr.data);
         // if (texture_id < 0 || texture_id > 254)
         //     continue;
-        
+
         out_entt_t oe = {
             .fpos = {
                 .x = entt->fpos.x,
@@ -187,13 +320,13 @@ void prep_out(){
             },
             .texture = (uint8_t)texture_id,
         };
-        
+
         vector_push(out_entt_vec, &oe);
     }
-    
+
     fprintf(stderr, "outcubelen: %zu\n", vector_size(out_cube_vec));
     fprintf(stderr, "outenttlen: %zu\n", vector_size(out_entt_vec));
-    
+
 }
 /*
 void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][max.y][max.z]) {
@@ -234,7 +367,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
                 fprintf(stderr, "W: texture_id is 0\n");
                 continue;
             }
-            
+
             // Access the positions of the primitive
             cgltf_accessor* position_accessor = primitive->attributes[0].data;
             cgltf_buffer_view* position_view = position_accessor->buffer_view;
@@ -254,7 +387,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
                 float transformedX = x * m[0] + y * m[4] + z * m[8] + m[12];
                 float transformedY = x * m[1] + y * m[5] + z * m[9] + m[13];
                 float transformedZ = x * m[2] + y * m[6] + z * m[10] + m[14];
-                
+
                 // Negative space, shouldn't be found
                 if(transformedX < 0 && transformedY < 0 && transformedZ < 0){
                     fprintf(stderr, "W: encountered mesh('%s') in negative space {%ld, %ld, %ld}\n",
@@ -278,7 +411,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
                 mesh_max_xyz.z = (uint64_t)fmax(mesh_max_xyz.z, posZ);
             }
         }
-        
+
         if( //mins
                mesh_min_xyz.x < 0 || mesh_min_xyz.x > max.x
             || mesh_min_xyz.y < 0 || mesh_min_xyz.y > max.y
@@ -303,7 +436,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
         //     for (uint64_t y = mesh_min_xyz.y; y < mesh_max_xyz.y; ++y)
         //         for (uint64_t z = mesh_min_xyz.z; z < mesh_max_xyz.z; ++z)
         //             (*arr)[x][y][z] = texture_id;
-        
+
         // vector_push()
 
         fprintf(stderr, "mesh: %s\n", mesh->name);
@@ -311,7 +444,7 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
              mesh_min_xyz.x, mesh_min_xyz.y, mesh_min_xyz.z,
              mesh_max_xyz.x, mesh_max_xyz.y, mesh_max_xyz.z
         );
-        
+
         // one or more indicies was in negative space
         skip_oob:
             continue;
@@ -321,51 +454,51 @@ void map_meshes_to_array(cgltf_data * data, pos3_t max, uint8_t (*arr)[max.x][ma
     // cgltf_free(data);
 }
 */
-bool node_is_cube(cgltf_node * node){
+bool node_is_cube(cgltf_node * node) {
     if(node->extras.data == NULL)
         return false;
-    
+
     jsmn_parser parser = { 0 };
     jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
     const char * xjson = node->extras.data;
-    
+
     jsmn_init(&parser);
     int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
-    
-    for(int i = 0; i < count; i++){
+
+    for(int i = 0; i < count; i++) {
         if( tokens[i].type == JSMN_STRING
-            && tokens[i].size > 0
-            && strncmp(xjson + tokens[i].start, "type", tokens[i].end - tokens[i].start) == 0
-            && tokens[i + 1].type == JSMN_STRING
-            && strncmp(xjson + tokens[i + 1].start, "cube", tokens[i + 1].end - tokens[i + 1].start) == 0
-        )
+                && tokens[i].size > 0
+                && strncmp(xjson + tokens[i].start, "type", tokens[i].end - tokens[i].start) == 0
+                && tokens[i + 1].type == JSMN_STRING
+                && strncmp(xjson + tokens[i + 1].start, "cube", tokens[i + 1].end - tokens[i + 1].start) == 0
+          )
             return true;
     }
-    
+
     return false;
 }
 
-bool node_is_entity(cgltf_node * node){
+bool node_is_entity(cgltf_node * node) {
     if(node->extras.data == NULL)
         return false;
-    
+
     jsmn_parser parser = { 0 };
     jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
     const char * xjson = node->extras.data;
-    
+
     jsmn_init(&parser);
     int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
-    
-    for(int i = 0; i < count; i++){
+
+    for(int i = 0; i < count; i++) {
         if( tokens[i].type == JSMN_STRING
-            && tokens[i].size > 0
-            && strncmp(xjson + tokens[i].start, "type", tokens[i].end - tokens[i].start) == 0
-            && tokens[i + 1].type == JSMN_STRING
-            && strncmp(xjson + tokens[i + 1].start, "entity", tokens[i + 1].end - tokens[i + 1].start) == 0
-        )
+                && tokens[i].size > 0
+                && strncmp(xjson + tokens[i].start, "type", tokens[i].end - tokens[i].start) == 0
+                && tokens[i + 1].type == JSMN_STRING
+                && strncmp(xjson + tokens[i + 1].start, "entity", tokens[i + 1].end - tokens[i + 1].start) == 0
+          )
             return true;
     }
-    
+
     return false;
 }
 
@@ -380,16 +513,16 @@ typedef enum {
     GROUP_ENTT,
 } mesh_group_t;
 
-pos3_t group_meshes(cgltf_data * data){
+pos3_t group_meshes(cgltf_data * data) {
     pos3_t max_xyz = { 0, 0, 0 };
-    
+
     // todo, skip entities
     for (size_t i = 0; i < data->nodes_count; ++i) {
-        
+
         cgltf_node * n = &(data->nodes[i]);
         mesh_group_t mg = GROUP_INVALID;
         mesh_class_t mc = CLASS_MAP;
-        
+
         // determine group
         if(node_is_cube(n))
             mg = GROUP_CUBE;
@@ -401,31 +534,31 @@ pos3_t group_meshes(cgltf_data * data){
             .y = n->translation[1],
             .z = n->translation[2],
         };
-        
+
         fpos3_t size = {
             .x = n->scale[0],
             .y = n->scale[1],
             .z = n->scale[2],
         };
-        
+
         // todo, if cube, start and end are either .0f or .5f
-        
-        if (size.x < 0 || size.y < 0 || size.z < 0){
+
+        if (size.x < 0 || size.y < 0 || size.z < 0) {
             fprintf(stderr, "W: scale was negative, skipping '%s'\n", n->name);
             continue;
         }
-        
+
         fpos3_t end = {
             .x = start.x + size.x,
             .y = start.y + size.y,
             .z = start.z + size.z,
         };
-        
+
         if (
             start.x < 0 || end.x < 0 ||
             start.y < 0 || end.y < 0 ||
             start.z < 0 || end.z < 0
-        ){
+        ) {
             mc = CLASS_REF;
             goto skip_negative;
         }
@@ -434,68 +567,76 @@ pos3_t group_meshes(cgltf_data * data){
         if (end.x > max_xyz.x) max_xyz.x = end.x;
         if (end.y > max_xyz.y) max_xyz.y = end.y;
         if (end.z > max_xyz.z) max_xyz.z = end.z;
-        
+
         // one or more indicies was in negative space
-        skip_negative:
-        
+skip_negative:
+
         switch (mc) {
-            case CLASS_REF: 
-                switch (mg) {
-                    case GROUP_CUBE:
-                        // ref cube
-                        vector_push(ref_cube_vec, &(rm_cube_t){.txtr = get_image(n), .start = start, .size = size});
-                        fprintf(stderr, "ref_cube_vec '%s'\n", n->name);
-                        break;
-                    case GROUP_ENTT: 
-                        // ref entt
-                        vector_push(ref_entt_vec, &(rm_entt_t){.txtr = get_image(n), .fpos = start});
-                        fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
-                        break;
-                    default:
-                        fprintf(stderr, "invalid group for ref node[%lu]('%s')\n", i, n->name);
-                        break;
-                }
+        case CLASS_REF:
+            switch (mg) {
+            case GROUP_CUBE:
+                // ref cube
+                vector_push(ref_cube_vec, &(rm_cube_t) {
+                    .txtr = get_image(n), .start = start, .size = size
+                });
+                fprintf(stderr, "ref_cube_vec '%s'\n", n->name);
                 break;
-            case CLASS_MAP: 
-                switch (mg) {
-                    case GROUP_CUBE:
-                        // map cube
-                        vector_push(map_cube_vec, &(rm_cube_t){.txtr = get_image(n), .start = start, .size = size});
-                        fprintf(stderr, "map_cube_vec '%s'\n", n->name);
-                        break;
-                    case GROUP_ENTT: 
-                        // map entt
-                        vector_push(map_entt_vec, &(rm_entt_t){.txtr = get_image(n), .fpos = start});
-                        fprintf(stderr, "map_entt_vec '%s'\n", n->name);
-                        break;
-                    default:
-                        fprintf(stderr, "invalid group for map node[%lu]('%s')\n", i, n->name);
-                        break;
-                }
+            case GROUP_ENTT:
+                // ref entt
+                vector_push(ref_entt_vec, &(rm_entt_t) {
+                    .txtr = get_image(n), .fpos = start, .verts = get_verts_from_mesh(n->mesh)
+                });
+                fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
                 break;
-            default: 
-                fprintf(stderr, "invalid class for node[%lu]('%s')\n", i, n->name);
+            default:
+                fprintf(stderr, "invalid group for ref node[%lu]('%s')\n", i, n->name);
                 break;
+            }
+            break;
+        case CLASS_MAP:
+            switch (mg) {
+            case GROUP_CUBE:
+                // map cube
+                vector_push(map_cube_vec, &(rm_cube_t) {
+                    .txtr = get_image(n), .start = start, .size = size
+                });
+                fprintf(stderr, "map_cube_vec '%s'\n", n->name);
+                break;
+            case GROUP_ENTT:
+                // map entt
+                vector_push(map_entt_vec, &(rm_entt_t) {
+                    .txtr = get_image(n), .fpos = start
+                });
+                fprintf(stderr, "map_entt_vec '%s'\n", n->name);
+                break;
+            default:
+                fprintf(stderr, "invalid group for map node[%lu]('%s')\n", i, n->name);
+                break;
+            }
+            break;
+        default:
+            fprintf(stderr, "invalid class for node[%lu]('%s')\n", i, n->name);
+            break;
         }
-        
+
     }
-    
+
     // check if the dimensions are too large
     // todo, test
     uint64_t rollover_xy = max_xyz.x * max_xyz.y;
-    if (max_xyz.x != 0 && rollover_xy / max_xyz.x != max_xyz.y){
+    if (max_xyz.x != 0 && rollover_xy / max_xyz.x != max_xyz.y) {
         // overflowed
         fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
         exit(1);
     }
-    
+
     uint64_t rollover_z = rollover_xy * max_xyz.z;
-    if (max_xyz.y != 0 && rollover_z / rollover_xy != max_xyz.z){
+    if (max_xyz.y != 0 && rollover_z / rollover_xy != max_xyz.z) {
         // overflowed
         fprintf(stderr, "map is too large to allocate at { %lu, %lu, %lu }", max_xyz.x, max_xyz.y, max_xyz.z);
         exit(1);
     }
-    
+
     return max_xyz;
 }
 
@@ -526,52 +667,36 @@ int main(int argc, char * argv[]) {
         fprintf(stderr, "Failed to load buffers\n");
         return 1;
     }
-    
+
     ref_cube_vec = vector_init(sizeof(rm_cube_t));
     map_cube_vec = vector_init(sizeof(rm_cube_t));
-    
+
     ref_entt_vec = vector_init(sizeof(rm_entt_t));
     map_entt_vec = vector_init(sizeof(rm_entt_t));
-    
+
     out_cube_vec = vector_init(sizeof(out_cube_t));
     out_entt_vec = vector_init(sizeof(out_entt_t));
-    
+
     pos3_t max_p = group_meshes(data);
-    
+
     prep_out();
-    
-// typedef struct {
-//     size_t len;
-//     uint8_t * data;
-// } txtr_t;
-    
-// typedef struct {
-//     txtr_t txtr;
-//     fpos3_t start;
-//     fpos3_t size;
-// } rm_cube_t;
-    
-// typedef struct {
-//     txtr_t txtr;
-//     fpos3_t fpos;
-// } rm_entt_t;
-    
+
     // mpack time
     // encode to memory buffer
     char* mp_data;
     size_t size;
     mpack_writer_t writer;
     mpack_writer_init_growable(&writer, &mp_data, &size);
-    
+
     // root map
     mpack_build_map(&writer);
-    
+
     // cube textures
     {
         mpack_write_cstr(&writer, "tex_cubes");
         size_t rclen = vector_size(ref_cube_vec);
         mpack_start_array(&writer, rclen);
-        for(size_t i = 0; i < rclen; i++){
+        for(size_t i = 0; i < rclen; i++) {
             rm_cube_t * rc = vector_at(ref_cube_vec, i);
             mpack_start_bin(&writer, rc->txtr.len);
             mpack_write_bytes(&writer, (char *)rc->txtr.data, rc->txtr.len);
@@ -579,13 +704,26 @@ int main(int argc, char * argv[]) {
         }
         mpack_finish_array(&writer);
     }
-    
+
+    typedef struct {
+        vector * u;
+        vector * v;
+        vector * anim_names;
+        vector * anim_frames;
+    } verts_t;
+
+    typedef struct {
+        verts_t verts;
+        txtr_t txtr;
+        fpos3_t fpos;
+    } rm_entt_t;
+
     // entt textures (todo, verticies per frame, uv)
     {
         mpack_write_cstr(&writer, "tex_entts");
         size_t ntlen = vector_size(ref_entt_vec);
         mpack_start_array(&writer, ntlen);
-        for(size_t i = 0; i < ntlen; i++){
+        for(size_t i = 0; i < ntlen; i++) {
             rm_entt_t * re = vector_at(ref_entt_vec, i);
             mpack_start_bin(&writer, re->txtr.len);
             mpack_write_bytes(&writer, (char *)re->txtr.data, re->txtr.len);
@@ -593,84 +731,92 @@ int main(int argc, char * argv[]) {
         }
         mpack_finish_array(&writer);
     }
-    
+
     // map cubes
     {
         mpack_write_cstr(&writer, "map_cubes");
         size_t mclen = vector_size(out_cube_vec);
         mpack_start_array(&writer, mclen);
-        for(size_t i = 0; i < mclen; i++){
+        for(size_t i = 0; i < mclen; i++) {
             out_cube_t * oc = vector_at(out_cube_vec, i);
             mpack_start_map(&writer, 3);
-            
+
             mpack_write_cstr(&writer, "tex_id");
             mpack_write_u8(&writer, oc->texture);
-            
+
             mpack_write_cstr(&writer, "start");
             mpack_start_array(&writer, 3);
             mpack_write_u64(&writer, oc->start.x);
             mpack_write_u64(&writer, oc->start.y);
             mpack_write_u64(&writer, oc->start.z);
             mpack_finish_array(&writer);
-            
+
             mpack_write_cstr(&writer, "size");
             mpack_start_array(&writer, 3);
             mpack_write_u64(&writer, oc->size.x);
             mpack_write_u64(&writer, oc->size.y);
             mpack_write_u64(&writer, oc->size.z);
             mpack_finish_array(&writer);
-            
+
             mpack_finish_map(&writer);
         }
         mpack_finish_array(&writer);
     }
-    
+
     // map entts
     {
         mpack_write_cstr(&writer, "map_entts");
         size_t melen = vector_size(out_entt_vec);
         mpack_start_array(&writer, melen);
-        for(size_t i = 0; i < melen; i++){
+        for(size_t i = 0; i < melen; i++) {
             out_entt_t * oe = vector_at(out_entt_vec, i);
             mpack_start_map(&writer, 2);
-            
+
             mpack_write_cstr(&writer, "tex_id");
             mpack_write_u8(&writer, oe->texture);
-            
+
             mpack_write_cstr(&writer, "pos");
             mpack_start_array(&writer, 3);
             mpack_write_float(&writer, oe->fpos.x);
             mpack_write_float(&writer, oe->fpos.y);
             mpack_write_float(&writer, oe->fpos.z);
             mpack_finish_array(&writer);
-            
+
             mpack_finish_map(&writer);
         }
         mpack_finish_array(&writer);
     }
-    
+
     mpack_complete_map(&writer);
-    
+
     // finish writing
     if (mpack_writer_destroy(&writer) != mpack_ok) {
         fprintf(stderr, "An error occurred encoding the data!\n");
     }
-    
+
     // fwrite some shit
     fwrite(mp_data, sizeof(char), size, stdout);
-    
+
     free(mp_data);
-    
+
     vector_free(ref_cube_vec);
     vector_free(map_cube_vec);
-    
+
+    size_t len = vector_size(ref_entt_vec);
+    for(size_t i = 0; i < len; i++) {
+        rm_entt_t * e = vector_at(ref_entt_vec, i);
+        vector_free(e->verts.u);
+        vector_free(e->verts.v);
+        vector_free(e->verts.anim_names);
+        vector_free(e->verts.anim_frames);
+    }
     vector_free(ref_entt_vec);
     vector_free(map_entt_vec);
-    
+
     vector_free(out_cube_vec);
     vector_free(out_entt_vec);
 
     cgltf_free(data);
 
-	return 0;
+    return 0;
 }
