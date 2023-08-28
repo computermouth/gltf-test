@@ -138,8 +138,10 @@ verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
     // push target names
     out_v.anim_names = vector_init(sizeof(char *));
     vector_push(out_v.anim_names, &default_frame_name);
-    for(size_t i = 0; i < mesh->target_names_count; i++)
+    for(size_t i = 0; i < mesh->target_names_count; i++) {
+        fprintf(stderr, "anim_name: %s\n", mesh->target_names[i]);
         vector_push(out_v.anim_names, &(mesh->target_names[i]));
+    }
 
     // push default frame
     out_v.anim_frames = vector_init(sizeof(fpos3_t) * uvCount);
@@ -691,9 +693,9 @@ int main(int argc, char * argv[]) {
     // root map
     mpack_build_map(&writer);
 
-    // cube textures
+    // cube references
     {
-        mpack_write_cstr(&writer, "tex_cubes");
+        mpack_write_cstr(&writer, "ref_cubes");
         size_t rclen = vector_size(ref_cube_vec);
         mpack_start_array(&writer, rclen);
         for(size_t i = 0; i < rclen; i++) {
@@ -705,29 +707,73 @@ int main(int argc, char * argv[]) {
         mpack_finish_array(&writer);
     }
 
-    typedef struct {
-        vector * u;
-        vector * v;
-        vector * anim_names;
-        vector * anim_frames;
-    } verts_t;
-
-    typedef struct {
-        verts_t verts;
-        txtr_t txtr;
-        fpos3_t fpos;
-    } rm_entt_t;
-
-    // entt textures (todo, verticies per frame, uv)
+    // entt references (todo, verticies per frame, uv)
     {
-        mpack_write_cstr(&writer, "tex_entts");
+        mpack_write_cstr(&writer, "ref_entts");
         size_t ntlen = vector_size(ref_entt_vec);
         mpack_start_array(&writer, ntlen);
         for(size_t i = 0; i < ntlen; i++) {
+            mpack_start_map(&writer, 5);
             rm_entt_t * re = vector_at(ref_entt_vec, i);
-            mpack_start_bin(&writer, re->txtr.len);
-            mpack_write_bytes(&writer, (char *)re->txtr.data, re->txtr.len);
-            mpack_finish_bin(&writer);
+            {   // txtr
+                mpack_write_cstr(&writer, "txtr");
+                mpack_start_bin(&writer, re->txtr.len);
+                mpack_write_bytes(&writer, (char *)re->txtr.data, re->txtr.len);
+                mpack_finish_bin(&writer);
+            }
+
+            {   // u
+                mpack_write_cstr(&writer, "u");
+                size_t ulen = vector_size(re->verts.u);
+                mpack_start_array(&writer, ulen);
+                for(size_t j = 0; j < ulen; j++)
+                    mpack_write_float(&writer, *(float *)vector_at(re->verts.u, j));
+                mpack_finish_array(&writer);
+            }
+
+            {   // v
+                mpack_write_cstr(&writer, "v");
+                size_t vlen = vector_size(re->verts.v);
+                mpack_start_array(&writer, vlen);
+                for(size_t j = 0; j < vlen; j++)
+                    mpack_write_float(&writer, *(float *)vector_at(re->verts.v, j));
+                mpack_finish_array(&writer);
+            }
+
+            {   // anim_names
+                mpack_write_cstr(&writer, "anim_names");
+                size_t aname_len = vector_size(re->verts.anim_names);
+                mpack_start_array(&writer, aname_len);
+                for(size_t j = 0; j < aname_len; j++)
+                    mpack_write_cstr(&writer, *(char **)vector_at(re->verts.anim_names, j));
+                mpack_finish_array(&writer);
+            }
+
+            size_t ulen = vector_size(re->verts.u);
+            size_t vlen = vector_size(re->verts.v);
+            if (ulen != vlen)
+                break;
+
+            {   // anim_frames
+                mpack_write_cstr(&writer, "anim_frames");
+                size_t aframe_len = vector_size(re->verts.anim_frames);
+                mpack_start_array(&writer, aframe_len);
+                for(size_t j = 0; j < aframe_len; j++) {
+                    fpos3_t * anim_frame = vector_at(re->verts.anim_frames,j);
+                    mpack_start_array(&writer, ulen);
+                    for(size_t k = 0; k < ulen; k++) {
+                        mpack_start_array(&writer, 3);
+                        mpack_write_float(&writer, anim_frame[k].x);
+                        mpack_write_float(&writer, anim_frame[k].y);
+                        mpack_write_float(&writer, anim_frame[k].z);
+                        mpack_finish_array(&writer);
+                    }
+                    mpack_finish_array(&writer);
+                }
+                mpack_finish_array(&writer);
+            }
+
+            mpack_finish_map(&writer);
         }
         mpack_finish_array(&writer);
     }
