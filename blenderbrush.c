@@ -62,6 +62,15 @@ typedef struct {
     fpos3_t fpos;
 } out_entt_t;
 
+typedef struct {
+    uint8_t color[4];
+    fpos3_t fpos;
+} out_lite_t;
+
+typedef struct {
+    fpos3_t fpos;
+} out_plyr_t;
+
 vector * ref_cube_vec = NULL;
 vector * ref_entt_vec = NULL;
 
@@ -70,7 +79,8 @@ vector * map_entt_vec = NULL;
 
 vector * out_cube_vec = NULL;
 vector * out_entt_vec = NULL;
-
+vector * out_lite_vec = NULL;
+vector * out_plyr_vec = NULL;
 
 // turn this into
 // POSITION
@@ -328,6 +338,8 @@ void prep_out() {
 
     fprintf(stderr, "outcubelen: %zu\n", vector_size(out_cube_vec));
     fprintf(stderr, "outenttlen: %zu\n", vector_size(out_entt_vec));
+    fprintf(stderr, "outlitelen: %zu\n", vector_size(out_lite_vec));
+    fprintf(stderr, "outplyrlen: %zu\n", vector_size(out_plyr_vec));
 
 }
 /*
@@ -504,6 +516,87 @@ bool node_is_entity(cgltf_node * node) {
     return false;
 }
 
+bool entity_is_player(cgltf_node * node) {
+    if(node->extras.data == NULL)
+        return false;
+
+    jsmn_parser parser = { 0 };
+    jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
+    const char * xjson = node->extras.data;
+
+    jsmn_init(&parser);
+    int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
+
+    for(int i = 0; i < count; i++) {
+        if( tokens[i].type == JSMN_STRING
+                && tokens[i].size > 0
+                && strncmp(xjson + tokens[i].start, "entity", tokens[i].end - tokens[i].start) == 0
+                && tokens[i + 1].type == JSMN_STRING
+                && strncmp(xjson + tokens[i + 1].start, "player", tokens[i + 1].end - tokens[i + 1].start) == 0
+          )
+            return true;
+    }
+
+    return false;
+}
+
+bool entity_is_light(cgltf_node * node) {
+    if(node->extras.data == NULL)
+        return false;
+
+    jsmn_parser parser = { 0 };
+    jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
+    const char * xjson = node->extras.data;
+
+    jsmn_init(&parser);
+    int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
+
+    for(int i = 0; i < count; i++) {
+        if( tokens[i].type == JSMN_STRING
+                && tokens[i].size > 0
+                && strncmp(xjson + tokens[i].start, "entity", tokens[i].end - tokens[i].start) == 0
+                && tokens[i + 1].type == JSMN_STRING
+                && strncmp(xjson + tokens[i + 1].start, "light", tokens[i + 1].end - tokens[i + 1].start) == 0
+          )
+            return true;
+    }
+
+    return false;
+}
+
+bool light_from_node(cgltf_node * node, out_lite_t * out) {
+    
+    if(node->extras.data == NULL)
+        goto fail;
+
+    jsmn_parser parser = { 0 };
+    jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
+    const char * xjson = node->extras.data;
+    
+    jsmn_init(&parser);
+    int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
+
+    for(int i = 0; i < count; i++) {
+            
+        if( tokens[i].type == JSMN_STRING
+                && tokens[i].size > 0
+                && strncmp(xjson + tokens[i].start, "color", tokens[i].end - tokens[i].start) == 0
+                && tokens[i + 1].size == 4
+          ){
+              out->color[0] = atoi(xjson + tokens[i + 2 + 0].start);
+              out->color[1] = atoi(xjson + tokens[i + 2 + 1].start);
+              out->color[2] = atoi(xjson + tokens[i + 2 + 2].start);
+              out->color[3] = atoi(xjson + tokens[i + 2 + 3].start);
+              
+              return true;
+          }
+    }
+
+    fail:
+    fprintf(stderr, "E: failed to get color of lights");   
+    exit(1);
+}
+
 typedef enum {
     CLASS_REF,
     CLASS_MAP,
@@ -513,6 +606,8 @@ typedef enum {
     GROUP_INVALID,
     GROUP_CUBE,
     GROUP_ENTT,
+    GROUP_ENTT_LIGHT,
+    GROUP_ENTT_PLAYER,
 } mesh_group_t;
 
 pos3_t group_meshes(cgltf_data * data) {
@@ -524,12 +619,18 @@ pos3_t group_meshes(cgltf_data * data) {
         cgltf_node * n = &(data->nodes[i]);
         mesh_group_t mg = GROUP_INVALID;
         mesh_class_t mc = CLASS_MAP;
+        out_lite_t ol = { 0 };
 
         // determine group
         if(node_is_cube(n))
             mg = GROUP_CUBE;
-        else if (node_is_entity(n))
+        else if (node_is_entity(n)){
             mg = GROUP_ENTT;
+            if(entity_is_light(n))
+                mg = GROUP_ENTT_LIGHT;
+            if(entity_is_player(n))
+                mg = GROUP_ENTT_PLAYER;
+        }
 
         fpos3_t start = {
             .x = n->translation[0],
@@ -590,6 +691,14 @@ skip_negative:
                 });
                 fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
                 break;
+            case GROUP_ENTT_LIGHT:
+                // ref light -> discard
+                fprintf(stderr, "ref_entt_light - discarding '%s'\n", n->name);
+                break;
+            case GROUP_ENTT_PLAYER:
+                // ref player -> discard
+                fprintf(stderr, "ref_entt_playr - discarding '%s'\n", n->name);
+                break;
             default:
                 fprintf(stderr, "invalid group for ref node[%lu]('%s')\n", i, n->name);
                 break;
@@ -610,6 +719,17 @@ skip_negative:
                     .txtr = get_image(n), .fpos = start
                 });
                 fprintf(stderr, "map_entt_vec '%s'\n", n->name);
+                break;
+            case GROUP_ENTT_LIGHT:
+                ol.fpos = start;
+                light_from_node(n, &ol);
+                vector_push(out_lite_vec, &ol);
+                fprintf(stderr, "map_entt_light '%s'\n", n->name);
+                break;
+            case GROUP_ENTT_PLAYER:
+                // ref player -> discard
+                vector_push(out_plyr_vec, &(out_plyr_t){.fpos = start});
+                fprintf(stderr, "map_entt_playr '%s'\n", n->name);
                 break;
             default:
                 fprintf(stderr, "invalid group for map node[%lu]('%s')\n", i, n->name);
@@ -678,6 +798,8 @@ int main(int argc, char * argv[]) {
 
     out_cube_vec = vector_init(sizeof(out_cube_t));
     out_entt_vec = vector_init(sizeof(out_entt_t));
+    out_lite_vec = vector_init(sizeof(out_lite_t));
+    out_plyr_vec = vector_init(sizeof(out_plyr_t));
 
     pos3_t max_p = group_meshes(data);
 
@@ -707,7 +829,7 @@ int main(int argc, char * argv[]) {
         mpack_finish_array(&writer);
     }
 
-    // entt references (todo, verticies per frame, uv)
+    // entt references
     {
         mpack_write_cstr(&writer, "ref_entts");
         size_t ntlen = vector_size(ref_entt_vec);
@@ -831,6 +953,51 @@ int main(int argc, char * argv[]) {
             mpack_finish_map(&writer);
         }
         mpack_finish_array(&writer);
+    }
+
+    // map lights
+    {
+        mpack_write_cstr(&writer, "map_lites");
+        size_t ollen = vector_size(out_lite_vec);
+        mpack_start_array(&writer, ollen);
+        for(size_t i = 0; i < ollen; i++) {
+            out_lite_t * ol = vector_at(out_lite_vec, i);
+            mpack_start_map(&writer, 2);
+
+            mpack_write_cstr(&writer, "color");
+            mpack_start_array(&writer, 4);
+            mpack_write_u8(&writer, ol->color[0]);
+            mpack_write_u8(&writer, ol->color[1]);
+            mpack_write_u8(&writer, ol->color[2]);
+            mpack_write_u8(&writer, ol->color[3]);
+            mpack_finish_array(&writer);
+
+            mpack_write_cstr(&writer, "pos");
+            mpack_start_array(&writer, 3);
+            mpack_write_float(&writer, ol->fpos.x);
+            mpack_write_float(&writer, ol->fpos.y);
+            mpack_write_float(&writer, ol->fpos.z);
+            mpack_finish_array(&writer);
+
+            mpack_finish_map(&writer);
+        }
+        mpack_finish_array(&writer);
+    }
+
+    // map player
+    {
+        mpack_write_cstr(&writer, "map_player");
+        size_t pllen = vector_size(out_plyr_vec);
+        if (pllen != 1)
+            fprintf(stderr, "E: len(player) == %zu\n", pllen);
+        
+        out_plyr_t * op = vector_at(out_plyr_vec, 0);
+            
+            mpack_start_array(&writer, 3);
+            mpack_write_float(&writer, op->fpos.x);
+            mpack_write_float(&writer, op->fpos.y);
+            mpack_write_float(&writer, op->fpos.z);
+            mpack_finish_array(&writer);
     }
 
     mpack_complete_map(&writer);

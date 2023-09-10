@@ -3,3 +3,6 @@ a.out
 *.tar
 maps
 txtr
+*.glb
+*.map
+*.mp
