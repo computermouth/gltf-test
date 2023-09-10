@@ -565,35 +565,35 @@ bool entity_is_light(cgltf_node * node) {
 }
 
 bool light_from_node(cgltf_node * node, out_lite_t * out) {
-    
+
     if(node->extras.data == NULL)
         goto fail;
 
     jsmn_parser parser = { 0 };
     jsmntok_t tokens[JSON_MAX_TOKENS] = { 0 };
     const char * xjson = node->extras.data;
-    
+
     jsmn_init(&parser);
     int count = jsmn_parse(&parser, xjson, strlen(xjson), tokens, JSON_MAX_TOKENS);
 
     for(int i = 0; i < count; i++) {
-            
+
         if( tokens[i].type == JSMN_STRING
                 && tokens[i].size > 0
                 && strncmp(xjson + tokens[i].start, "color", tokens[i].end - tokens[i].start) == 0
                 && tokens[i + 1].size == 4
-          ){
-              out->color[0] = atoi(xjson + tokens[i + 2 + 0].start);
-              out->color[1] = atoi(xjson + tokens[i + 2 + 1].start);
-              out->color[2] = atoi(xjson + tokens[i + 2 + 2].start);
-              out->color[3] = atoi(xjson + tokens[i + 2 + 3].start);
-              
-              return true;
-          }
+          ) {
+            out->color[0] = atoi(xjson + tokens[i + 2 + 0].start);
+            out->color[1] = atoi(xjson + tokens[i + 2 + 1].start);
+            out->color[2] = atoi(xjson + tokens[i + 2 + 2].start);
+            out->color[3] = atoi(xjson + tokens[i + 2 + 3].start);
+
+            return true;
+        }
     }
 
-    fail:
-    fprintf(stderr, "E: failed to get color of lights");   
+fail:
+    fprintf(stderr, "E: failed to get color of lights");
     exit(1);
 }
 
@@ -624,7 +624,7 @@ pos3_t group_meshes(cgltf_data * data) {
         // determine group
         if(node_is_cube(n))
             mg = GROUP_CUBE;
-        else if (node_is_entity(n)){
+        else if (node_is_entity(n)) {
             mg = GROUP_ENTT;
             if(entity_is_light(n))
                 mg = GROUP_ENTT_LIGHT;
@@ -728,7 +728,9 @@ skip_negative:
                 break;
             case GROUP_ENTT_PLAYER:
                 // ref player -> discard
-                vector_push(out_plyr_vec, &(out_plyr_t){.fpos = start});
+                vector_push(out_plyr_vec, &(out_plyr_t) {
+                    .fpos = start
+                });
                 fprintf(stderr, "map_entt_playr '%s'\n", n->name);
                 break;
             default:
@@ -990,14 +992,14 @@ int main(int argc, char * argv[]) {
         size_t pllen = vector_size(out_plyr_vec);
         if (pllen != 1)
             fprintf(stderr, "E: len(player) == %zu\n", pllen);
-        
+
         out_plyr_t * op = vector_at(out_plyr_vec, 0);
-            
-            mpack_start_array(&writer, 3);
-            mpack_write_float(&writer, op->fpos.x);
-            mpack_write_float(&writer, op->fpos.y);
-            mpack_write_float(&writer, op->fpos.z);
-            mpack_finish_array(&writer);
+
+        mpack_start_array(&writer, 3);
+        mpack_write_float(&writer, op->fpos.x);
+        mpack_write_float(&writer, op->fpos.y);
+        mpack_write_float(&writer, op->fpos.z);
+        mpack_finish_array(&writer);
     }
 
     mpack_complete_map(&writer);
