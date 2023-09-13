@@ -19,57 +19,57 @@ typedef struct {
     uint64_t x;
     uint64_t y;
     uint64_t z;
-} pos3_t;
+} mapc_pos3_t;
 
 typedef struct {
     float x;
     float y;
     float z;
-} fpos3_t;
+} mapc_fpos3_t;
 
 typedef struct {
     size_t len;
     uint8_t * data;
-} txtr_t;
+} mapc_txtr_t;
 
 typedef struct {
     vector * u;
     vector * v;
     vector * anim_names;
     vector * anim_frames;
-} verts_t;
+} mapc_verts_t;
 
 typedef struct {
-    txtr_t txtr;
-    fpos3_t start;
-    fpos3_t size;
-} rm_cube_t;
+    mapc_txtr_t txtr;
+    mapc_fpos3_t start;
+    mapc_fpos3_t size;
+} mapc_rm_cube_t;
 
 typedef struct {
-    verts_t verts;
-    txtr_t txtr;
-    fpos3_t fpos;
-} rm_entt_t;
-
-typedef struct {
-    uint8_t texture;
-    pos3_t start;
-    pos3_t size;
-} out_cube_t;
+    mapc_verts_t verts;
+    mapc_txtr_t txtr;
+    mapc_fpos3_t fpos;
+} mapc_rm_entt_t;
 
 typedef struct {
     uint8_t texture;
-    fpos3_t fpos;
-} out_entt_t;
+    mapc_pos3_t start;
+    mapc_pos3_t size;
+} mapc_out_cube_t;
+
+typedef struct {
+    uint8_t texture;
+    mapc_fpos3_t fpos;
+} mapc_out_entt_t;
 
 typedef struct {
     uint8_t color[4];
-    fpos3_t fpos;
-} out_lite_t;
+    mapc_fpos3_t fpos;
+} mapc_out_lite_t;
 
 typedef struct {
-    fpos3_t fpos;
-} out_plyr_t;
+    mapc_fpos3_t fpos;
+} mapc_out_plyr_t;
 
 vector * ref_cube_vec = NULL;
 vector * ref_entt_vec = NULL;
@@ -89,9 +89,9 @@ vector * out_plyr_vec = NULL;
 
 char * default_frame_name = "default";
 
-verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
+mapc_verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
 
-    verts_t out_v = {0};
+    mapc_verts_t out_v = {0};
 
     // Find the index of the TEXCOORD_0 attribute
     cgltf_attribute* uvAttribute = NULL;
@@ -154,8 +154,8 @@ verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
     }
 
     // push default frame
-    out_v.anim_frames = vector_init(sizeof(fpos3_t) * uvCount);
-    fpos3_t * tmp_frame = malloc(sizeof(fpos3_t) * uvCount);
+    out_v.anim_frames = vector_init(sizeof(mapc_fpos3_t) * uvCount);
+    mapc_fpos3_t * tmp_frame = malloc(sizeof(mapc_fpos3_t) * uvCount);
     for(size_t i = 0; i < position_accessor->count; i++) {
         cgltf_float tmp[3];
         cgltf_accessor_read_float(position_accessor, i, tmp, 3);
@@ -164,7 +164,7 @@ verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
         tmp_frame[i].z = tmp[2];
     }
     vector_push(out_v.anim_frames, tmp_frame);
-    fpos3_t * default_frame = vector_at(out_v.anim_frames, 0);
+    mapc_fpos3_t * default_frame = vector_at(out_v.anim_frames, 0);
 
     // create and push target frames
     cgltf_primitive * tmp_prim = &(mesh->primitives[0]);
@@ -187,18 +187,18 @@ verts_t get_verts_from_mesh(cgltf_mesh * mesh) {
         }
         vector_push(out_v.anim_frames, tmp_frame);
         // reset tmp_frame to default
-        memcpy(tmp_frame, default_frame, sizeof(fpos3_t) * uvCount);
+        memcpy(tmp_frame, default_frame, sizeof(mapc_fpos3_t) * uvCount);
     }
     free(tmp_frame);
 
     return out_v;
 }
 
-txtr_t get_image(cgltf_node* node) {
+mapc_txtr_t get_image(cgltf_node* node) {
 
     if (node->mesh == NULL) {
         fprintf(stderr, "Node does not have a mesh.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
@@ -206,7 +206,7 @@ txtr_t get_image(cgltf_node* node) {
     cgltf_mesh * mesh = node->mesh;
     if (mesh->primitives == NULL) {
         fprintf(stderr, "Mesh does not have primitives.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
@@ -214,7 +214,7 @@ txtr_t get_image(cgltf_node* node) {
     cgltf_primitive prim = mesh->primitives[0];
     if (prim.material == NULL) {
         fprintf(stderr, "Primitive does not have a material.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
@@ -224,7 +224,7 @@ txtr_t get_image(cgltf_node* node) {
 
     if (pbr->base_color_texture.texture == NULL) {
         fprintf(stderr, "Material does not have an associated texture.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
@@ -233,7 +233,7 @@ txtr_t get_image(cgltf_node* node) {
 
     if (texture_view->image == NULL) {
         fprintf(stderr, "Texture does not have an associated image.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
@@ -242,21 +242,21 @@ txtr_t get_image(cgltf_node* node) {
 
     if (image->uri != NULL && strlen(image->uri) > 0) {
         fprintf(stderr, "URI-based images are not supported in this example.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
 
     if (image->buffer_view == NULL) {
         fprintf(stderr, "Image does not have a buffer view.\n");
-        return (txtr_t) {
+        return (mapc_txtr_t) {
             0
         };
     }
 
     fprintf(stderr, "found image: %s.png\n", image->name);
 
-    return (txtr_t) {
+    return (mapc_txtr_t) {
         .len = image->buffer_view->size,
         .data = (unsigned char*)(image->buffer_view->buffer->data + image->buffer_view->offset)
     };
@@ -267,7 +267,7 @@ int32_t find_cube_txtr_id(uint8_t * txtr_data) {
     if(len > 255)
         fprintf(stderr, "W: found more than 255 cube textures!");
     for(size_t i = 0; i < len; i++) {
-        rm_cube_t * ref_cube = vector_at(ref_cube_vec, i);
+        mapc_rm_cube_t * ref_cube = vector_at(ref_cube_vec, i);
         if (ref_cube->txtr.data == txtr_data)
             return i;
     }
@@ -278,7 +278,7 @@ int32_t find_cube_txtr_id(uint8_t * txtr_data) {
 int32_t find_entt_txtr_id(uint8_t * txtr_data) {
     size_t len = vector_size(ref_entt_vec);
     for(size_t i = 0; i < len; i++) {
-        rm_entt_t * ref_entt = vector_at(ref_entt_vec, i);
+        mapc_rm_entt_t * ref_entt = vector_at(ref_entt_vec, i);
         if (ref_entt->txtr.data == txtr_data)
             return i;
     }
@@ -292,13 +292,13 @@ void prep_out() {
     // map cube -> out cube
     len = vector_size(map_cube_vec);
     for(size_t i = 0; i < len; i++) {
-        rm_cube_t * cube = vector_at(map_cube_vec, i);
+        mapc_rm_cube_t * cube = vector_at(map_cube_vec, i);
         // int32_t texture_id = 0;
         int32_t texture_id = find_cube_txtr_id(cube->txtr.data);
         // if (texture_id < 0 || texture_id > 254)
         //     continue;
 
-        out_cube_t oc = {
+        mapc_out_cube_t oc = {
             .start = {
                 .x = (uint64_t)cube->start.x,
                 .y = (uint64_t)cube->start.y,
@@ -318,13 +318,13 @@ void prep_out() {
     // map entt -> out entt
     len = vector_size(map_entt_vec);
     for(size_t i = 0; i < len; i++) {
-        rm_entt_t * entt = vector_at(map_entt_vec, i);
+        mapc_rm_entt_t * entt = vector_at(map_entt_vec, i);
         // int32_t texture_id = 0;
         int32_t texture_id = find_entt_txtr_id(entt->txtr.data);
         // if (texture_id < 0 || texture_id > 254)
         //     continue;
 
-        out_entt_t oe = {
+        mapc_out_entt_t oe = {
             .fpos = {
                 .x = entt->fpos.x,
                 .y = entt->fpos.y,
@@ -564,7 +564,7 @@ bool entity_is_light(cgltf_node * node) {
     return false;
 }
 
-bool light_from_node(cgltf_node * node, out_lite_t * out) {
+bool light_from_node(cgltf_node * node, mapc_out_lite_t * out) {
 
     if(node->extras.data == NULL)
         goto fail;
@@ -610,8 +610,8 @@ typedef enum {
     GROUP_ENTT_PLAYER,
 } mesh_group_t;
 
-pos3_t group_meshes(cgltf_data * data) {
-    pos3_t max_xyz = { 0, 0, 0 };
+mapc_pos3_t group_meshes(cgltf_data * data) {
+    mapc_pos3_t max_xyz = { 0, 0, 0 };
 
     // todo, skip entities
     for (size_t i = 0; i < data->nodes_count; ++i) {
@@ -619,7 +619,7 @@ pos3_t group_meshes(cgltf_data * data) {
         cgltf_node * n = &(data->nodes[i]);
         mesh_group_t mg = GROUP_INVALID;
         mesh_class_t mc = CLASS_MAP;
-        out_lite_t ol = { 0 };
+        mapc_out_lite_t ol = { 0 };
 
         // determine group
         if(node_is_cube(n))
@@ -632,13 +632,13 @@ pos3_t group_meshes(cgltf_data * data) {
                 mg = GROUP_ENTT_PLAYER;
         }
 
-        fpos3_t start = {
+        mapc_fpos3_t start = {
             .x = n->translation[0],
             .y = n->translation[1],
             .z = n->translation[2],
         };
 
-        fpos3_t size = {
+        mapc_fpos3_t size = {
             .x = n->scale[0],
             .y = n->scale[1],
             .z = n->scale[2],
@@ -651,7 +651,7 @@ pos3_t group_meshes(cgltf_data * data) {
             continue;
         }
 
-        fpos3_t end = {
+        mapc_fpos3_t end = {
             .x = start.x + size.x,
             .y = start.y + size.y,
             .z = start.z + size.z,
@@ -679,14 +679,14 @@ skip_negative:
             switch (mg) {
             case GROUP_CUBE:
                 // ref cube
-                vector_push(ref_cube_vec, &(rm_cube_t) {
+                vector_push(ref_cube_vec, &(mapc_rm_cube_t) {
                     .txtr = get_image(n), .start = start, .size = size
                 });
                 fprintf(stderr, "ref_cube_vec '%s'\n", n->name);
                 break;
             case GROUP_ENTT:
                 // ref entt
-                vector_push(ref_entt_vec, &(rm_entt_t) {
+                vector_push(ref_entt_vec, &(mapc_rm_entt_t) {
                     .txtr = get_image(n), .fpos = start, .verts = get_verts_from_mesh(n->mesh)
                 });
                 fprintf(stderr, "ref_entt_vec '%s'\n", n->name);
@@ -708,14 +708,14 @@ skip_negative:
             switch (mg) {
             case GROUP_CUBE:
                 // map cube
-                vector_push(map_cube_vec, &(rm_cube_t) {
+                vector_push(map_cube_vec, &(mapc_rm_cube_t) {
                     .txtr = get_image(n), .start = start, .size = size
                 });
                 fprintf(stderr, "map_cube_vec '%s'\n", n->name);
                 break;
             case GROUP_ENTT:
                 // map entt
-                vector_push(map_entt_vec, &(rm_entt_t) {
+                vector_push(map_entt_vec, &(mapc_rm_entt_t) {
                     .txtr = get_image(n), .fpos = start
                 });
                 fprintf(stderr, "map_entt_vec '%s'\n", n->name);
@@ -728,7 +728,7 @@ skip_negative:
                 break;
             case GROUP_ENTT_PLAYER:
                 // ref player -> discard
-                vector_push(out_plyr_vec, &(out_plyr_t) {
+                vector_push(out_plyr_vec, &(mapc_out_plyr_t) {
                     .fpos = start
                 });
                 fprintf(stderr, "map_entt_playr '%s'\n", n->name);
@@ -792,18 +792,18 @@ int main(int argc, char * argv[]) {
         return 1;
     }
 
-    ref_cube_vec = vector_init(sizeof(rm_cube_t));
-    map_cube_vec = vector_init(sizeof(rm_cube_t));
+    ref_cube_vec = vector_init(sizeof(mapc_rm_cube_t));
+    map_cube_vec = vector_init(sizeof(mapc_rm_cube_t));
 
-    ref_entt_vec = vector_init(sizeof(rm_entt_t));
-    map_entt_vec = vector_init(sizeof(rm_entt_t));
+    ref_entt_vec = vector_init(sizeof(mapc_rm_entt_t));
+    map_entt_vec = vector_init(sizeof(mapc_rm_entt_t));
 
-    out_cube_vec = vector_init(sizeof(out_cube_t));
-    out_entt_vec = vector_init(sizeof(out_entt_t));
-    out_lite_vec = vector_init(sizeof(out_lite_t));
-    out_plyr_vec = vector_init(sizeof(out_plyr_t));
+    out_cube_vec = vector_init(sizeof(mapc_out_cube_t));
+    out_entt_vec = vector_init(sizeof(mapc_out_entt_t));
+    out_lite_vec = vector_init(sizeof(mapc_out_lite_t));
+    out_plyr_vec = vector_init(sizeof(mapc_out_plyr_t));
 
-    pos3_t max_p = group_meshes(data);
+    mapc_pos3_t max_p = group_meshes(data);
 
     prep_out();
 
@@ -823,7 +823,7 @@ int main(int argc, char * argv[]) {
         size_t rclen = vector_size(ref_cube_vec);
         mpack_start_array(&writer, rclen);
         for(size_t i = 0; i < rclen; i++) {
-            rm_cube_t * rc = vector_at(ref_cube_vec, i);
+            mapc_rm_cube_t * rc = vector_at(ref_cube_vec, i);
             mpack_start_bin(&writer, rc->txtr.len);
             mpack_write_bytes(&writer, (char *)rc->txtr.data, rc->txtr.len);
             mpack_finish_bin(&writer);
@@ -838,7 +838,7 @@ int main(int argc, char * argv[]) {
         mpack_start_array(&writer, ntlen);
         for(size_t i = 0; i < ntlen; i++) {
             mpack_start_map(&writer, 5);
-            rm_entt_t * re = vector_at(ref_entt_vec, i);
+            mapc_rm_entt_t * re = vector_at(ref_entt_vec, i);
             {   // txtr
                 mpack_write_cstr(&writer, "txtr");
                 mpack_start_bin(&writer, re->txtr.len);
@@ -883,7 +883,7 @@ int main(int argc, char * argv[]) {
                 size_t aframe_len = vector_size(re->verts.anim_frames);
                 mpack_start_array(&writer, aframe_len);
                 for(size_t j = 0; j < aframe_len; j++) {
-                    fpos3_t * anim_frame = vector_at(re->verts.anim_frames,j);
+                    mapc_fpos3_t * anim_frame = vector_at(re->verts.anim_frames,j);
                     mpack_start_array(&writer, ulen);
                     for(size_t k = 0; k < ulen; k++) {
                         mpack_start_array(&writer, 3);
@@ -908,7 +908,7 @@ int main(int argc, char * argv[]) {
         size_t mclen = vector_size(out_cube_vec);
         mpack_start_array(&writer, mclen);
         for(size_t i = 0; i < mclen; i++) {
-            out_cube_t * oc = vector_at(out_cube_vec, i);
+            mapc_out_cube_t * oc = vector_at(out_cube_vec, i);
             mpack_start_map(&writer, 3);
 
             mpack_write_cstr(&writer, "tex_id");
@@ -939,7 +939,7 @@ int main(int argc, char * argv[]) {
         size_t melen = vector_size(out_entt_vec);
         mpack_start_array(&writer, melen);
         for(size_t i = 0; i < melen; i++) {
-            out_entt_t * oe = vector_at(out_entt_vec, i);
+            mapc_out_entt_t * oe = vector_at(out_entt_vec, i);
             mpack_start_map(&writer, 2);
 
             mpack_write_cstr(&writer, "tex_id");
@@ -963,7 +963,7 @@ int main(int argc, char * argv[]) {
         size_t ollen = vector_size(out_lite_vec);
         mpack_start_array(&writer, ollen);
         for(size_t i = 0; i < ollen; i++) {
-            out_lite_t * ol = vector_at(out_lite_vec, i);
+            mapc_out_lite_t * ol = vector_at(out_lite_vec, i);
             mpack_start_map(&writer, 2);
 
             mpack_write_cstr(&writer, "color");
@@ -993,7 +993,7 @@ int main(int argc, char * argv[]) {
         if (pllen != 1)
             fprintf(stderr, "E: len(player) == %zu\n", pllen);
 
-        out_plyr_t * op = vector_at(out_plyr_vec, 0);
+        mapc_out_plyr_t * op = vector_at(out_plyr_vec, 0);
 
         mpack_start_array(&writer, 3);
         mpack_write_float(&writer, op->fpos.x);
@@ -1019,7 +1019,7 @@ int main(int argc, char * argv[]) {
 
     size_t len = vector_size(ref_entt_vec);
     for(size_t i = 0; i < len; i++) {
-        rm_entt_t * e = vector_at(ref_entt_vec, i);
+        mapc_rm_entt_t * e = vector_at(ref_entt_vec, i);
         vector_free(e->verts.u);
         vector_free(e->verts.v);
         vector_free(e->verts.anim_names);
